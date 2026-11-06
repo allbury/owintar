@@ -33,6 +33,22 @@ aside h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(
 .sw.likw{background-image:repeating-linear-gradient(90deg,currentColor 0 4px,transparent 4px 7px)!important}
 .cnt{font-family:var(--f-mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .grp{font-size:11px;color:var(--muted);margin:8px 0 2px}
+.grpbtn{display:flex;align-items:center;gap:6px;width:100%;background:none;border:0;border-top:1px solid rgba(127,127,127,.25);padding:7px 2px;margin:0;cursor:pointer;text-align:left;font:inherit;font-size:12px;font-weight:600;color:inherit}
+.grpbtn .car{display:inline-block;width:10px;transition:transform .15s;color:var(--muted)}
+.grpbtn[aria-expanded="true"] .car{transform:rotate(90deg)}
+.grpbtn .gcnt{margin-left:auto;font-weight:400;font-size:11px;color:var(--muted)}
+.lbody{padding:0 0 6px 4px}
+details.sub{border-top:1px solid rgba(127,127,127,.25)}
+details.sub>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;padding:7px 2px;font-size:12px;font-weight:600}
+details.sub>summary::-webkit-details-marker{display:none}
+details.sub>summary::before{content:"▸";display:inline-block;width:10px;color:var(--muted);transition:transform .15s}
+details.sub[open]>summary::before{transform:rotate(90deg)}
+details.sub>*:not(summary){margin-left:4px}
+details.sub[open]{padding-bottom:6px}
+#compass{position:absolute;top:12px;right:max(12px,env(safe-area-inset-right,0px));width:62px;height:62px;padding:2px;border-radius:50%;background:var(--panel);border:1px solid var(--line);cursor:pointer;display:grid;place-items:center;z-index:5}
+#compass .cring{fill:none;stroke:var(--muted);stroke-width:1;opacity:.6}
+#compass .cn{fill:#c62828}#compass .cs{fill:var(--muted);opacity:.55}
+#compass .ct{font:700 10px system-ui,sans-serif;fill:#c62828}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 input[type=range]{flex:1;accent-color:var(--accent)}
 .btns{display:flex;gap:6px;flex-wrap:wrap}
@@ -72,6 +88,8 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 @media (prefers-reduced-motion:reduce){aside{transition:none}}
 #pmodal{position:fixed;inset:0;background:rgba(10,15,20,.55);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
 #pmodal[hidden]{display:none}
+[hidden]{display:none!important}
+.hud{right:86px}
 .pbox{background:var(--panel);color:var(--ink);width:min(1500px,100%);max-height:100%;display:flex;flex-direction:column;border:1px solid var(--line);box-shadow:0 8px 30px rgba(0,0,0,.35)}
 .ptool{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px}
 .ptool select{font:inherit;padding:2px 4px}
@@ -84,31 +102,40 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
     <div id="tip" hidden></div>
     <div id="mbar" hidden><span id="mbarTxt"></span><button id="mbFin" hidden>Zakończ</button><button id="mbCancel">Anuluj</button></div>
     <button id="sheetBtn" aria-expanded="false" aria-controls="side">Warstwy i narzędzia</button>
+    <button id="compass" type="button" title="Północ – kliknij, aby ustawić widok północą do góry" aria-label="Północ – ustaw widok północą do góry"><svg viewBox="-30 -30 60 60" width="56" height="56" aria-hidden="true"><circle r="27" class="cring"/><g id="cneedle"><path d="M0,-21 L7,4 L0,0 L-7,4 Z" class="cn"/><path d="M0,21 L7,4 L0,0 L-7,4 Z" class="cs"/><text y="-23.5" text-anchor="middle" class="ct">N</text></g></svg></button>
     <div class="legendz" id="zinfo">przewyższenie ×1</div>
     <div class="readout" id="ro">najedź na obiekt – współrzędne i rzędna</div>
   </div>
   <aside id="side">
     <section>
       <h2>Widok</h2>
+      <details class="sub" open><summary>Widok i narzędzia</summary>
       <div class="row"><label for="exag">Przewyższenie</label><input id="exag" type="range" min="1" max="6" step="0.5" value="1"><span class="cnt" id="exv">×1</span></div>
-      <div class="row" style="margin-top:6px"><label><input id="road" type="checkbox" checked> Droga – nawierzchnia proj. (warstwicówka)</label></div>
-      <div class="row"><label for="ropa">Przezroczystość nawierzchni</label><input id="ropa" type="range" min="0.15" max="1" step="0.05" value="0.55"></div>
-      <div class="row"><label><input id="rlin" type="checkbox" checked> Krawężniki, obrzeża, osie</label></div>
-      <div class="row"><label><input id="rpaint" type="checkbox" checked> Oznakowanie poziome (malowanie pasów)</label></div>
-      <div class="row"><label><input id="terr" type="checkbox"> Teren istniejący (TIN)</label></div>
-      <div class="row"><label for="popa">Przezroczystość przejścia podz.</label><input id="popa" type="range" min="0.1" max="1" step="0.05" value="1"></div>
-      <div class="row"><label><input id="orto" type="checkbox" checked> Ortofotomapa (GUGiK)</label></div>
-      <div class="row"><label for="oopa">Przezroczystość ortofotomapy</label><input id="oopa" type="range" min="0.05" max="1" step="0.05" value="1"><span class="cnt" id="oopv">100%</span></div>
-      <div class="row"><label><input id="bld" type="checkbox" checked> Budynki 3D LOD2 (GUGiK)</label></div>
-      <div class="row"><label for="bopa">Przezroczystość budynków</label><input id="bopa" type="range" min="0.15" max="1" step="0.05" value="1"></div>
-      <div class="row"><label><input id="tree" type="checkbox" checked> Drzewa i wiaty (mapa zasadnicza)</label></div>
-      <p class="hint" style="font-size:11px;color:#6b7280;margin:4px 0 6px;line-height:1.35">Ortofotomapa i modele 3D budynków LOD2: GUGiK, geoportal.gov.pl (dane otwarte). Budynki LOD2 mają podstawę na najniższym punkcie NMT – ściany schodzą ok. 0,5–1 m poniżej terenu.</p>
-      <div class="rleg" id="rleg"></div>
-      <div class="btns" style="margin-top:8px"><button id="vTop">Plan</button><button id="vIso">Aksonometria</button><button id="vAll">Całość</button><button id="vPP">Przejście</button><button id="vMeas" aria-pressed="false">Pomiar</button></div>
+      <div class="btns" style="margin-top:6px"><button id="vTop">Plan</button><button id="vIso">Aksonometria</button><button id="vAll">Całość</button><button id="vPP">Przejście</button><button id="vMeas" aria-pressed="false">Pomiar</button></div>
       <div class="btns" style="margin-top:6px"><button id="vSec" aria-pressed="false">Przekrój (rysuj linię)</button><button id="vRoute" aria-pressed="false">Profil po trasie sieci</button><button id="pFin" hidden>Zakończ</button></div>
       <div class="mres" id="pres" aria-live="polite"></div>
       <div class="mres" id="mres" aria-live="polite"></div>
       <div class="note" style="margin-top:4px">Pomiar i odczyt H chwytają najbliższy widoczny obiekt – aby mierzyć rury pod drogą, wyłącz nawierzchnię.</div>
+      </details>
+      <details class="sub"><summary>Droga</summary>
+      <div class="row" style="margin-top:6px"><label><input id="road" type="checkbox" checked> Droga – nawierzchnia proj. (warstwicówka)</label></div>
+      <div class="row"><label for="ropa">Przezroczystość nawierzchni</label><input id="ropa" type="range" min="0.15" max="1" step="0.05" value="0.55"></div>
+      <div class="row"><label><input id="rlin" type="checkbox" checked> Krawężniki, obrzeża, osie</label></div>
+      <div class="row"><label><input id="rpaint" type="checkbox" checked> Oznakowanie poziome (malowanie pasów)</label></div>
+      <div class="rleg" id="rleg"></div>
+      </details>
+      <details class="sub"><summary>Teren i ortofotomapa</summary>
+      <div class="row"><label><input id="terr" type="checkbox"> Teren istniejący (TIN)</label></div>
+      <div class="row"><label><input id="orto" type="checkbox" checked> Ortofotomapa (GUGiK)</label></div>
+      <div class="row"><label for="oopa">Przezroczystość ortofotomapy</label><input id="oopa" type="range" min="0.05" max="1" step="0.05" value="1"><span class="cnt" id="oopv">100%</span></div>
+      </details>
+      <details class="sub"><summary>Budynki, drzewa, przejście podziemne</summary>
+      <div class="row"><label><input id="bld" type="checkbox" checked> Budynki 3D LOD2 (GUGiK)</label></div>
+      <div class="row"><label for="bopa">Przezroczystość budynków</label><input id="bopa" type="range" min="0.15" max="1" step="0.05" value="1"></div>
+      <div class="row"><label><input id="tree" type="checkbox" checked> Drzewa i wiaty (mapa zasadnicza)</label></div>
+      <div class="row"><label for="popa">Przezroczystość przejścia podz.</label><input id="popa" type="range" min="0.1" max="1" step="0.05" value="1"></div>
+      <p class="hint" style="font-size:11px;color:#6b7280;margin:4px 0 6px;line-height:1.35">Ortofotomapa i modele 3D budynków LOD2: GUGiK, geoportal.gov.pl (dane otwarte). Budynki LOD2 mają podstawę na najniższym punkcie NMT – ściany schodzą ok. 0,5–1 m poniżej terenu.</p>
+      </details>
     </section>
     <section><h2>Warstwy</h2><div class="layers" id="layers"></div></section>
     <section><h2>Zmiany wg kart KNA</h2><div class="marks" id="knal"></div><p class="note" style="margin-top:4px">KNA 07 to wstępna analiza – rozwiązanie jako założenie do akceptacji Inwestora i ponownego zaopiniowania przez TW.</p></section>
@@ -350,33 +377,47 @@ const ORDER = [['Sieci projektowane (sanitarne)', g=>['KD','KO','KS','KS_san','W
                ['Kable i kanalizacja kablowa', g=>/^(E|T)_/.test(g.id)]];
 function panel(){
   const box = document.getElementById('layers'); box.innerHTML='';
+  let open={}; try{ open=JSON.parse(localStorage.getItem('owintar_layers_open')||'{}'); }catch(e){}
+  const sec=(t)=>{
+    const w=document.createElement('div'); w.className='lgrp';
+    const h=document.createElement('button'); h.type='button'; h.className='grp grpbtn';
+    const body=document.createElement('div'); body.className='lbody';
+    const isOpen=!!open[t]; body.hidden=!isOpen; h.setAttribute('aria-expanded',isOpen);
+    h.innerHTML='<span class="car">▸</span><span>'+t+'</span><span class="gcnt"></span>';
+    h.addEventListener('click',()=>{ body.hidden=!body.hidden; h.setAttribute('aria-expanded',!body.hidden); open[t]=!body.hidden;
+      try{ localStorage.setItem('owintar_layers_open',JSON.stringify(open)); }catch(e){} });
+    const upd=()=>{ const c=body.querySelectorAll('input[type=checkbox]'); let n=0; c.forEach(x=>{ if(x.checked) n++; }); h.querySelector('.gcnt').textContent=n+'/'+c.length; };
+    body.addEventListener('change',upd); w.appendChild(h); w.appendChild(body); box.appendChild(w); setTimeout(upd,0); return body;
+  };
   ORDER.forEach(([t,f])=>{
-    const h=document.createElement('div'); h.className='grp'; h.textContent=t; box.appendChild(h);
-    D.groups.filter(f).forEach(g=>{
+    const gs=D.groups.filter(f); if(!gs.length) return;
+    const b=sec(t);
+    gs.forEach(g=>{
       const id='L_'+g.id, lab=document.createElement('label'); lab.htmlFor=id;
       const likw = g.kind==='istn_likw';
       lab.innerHTML = `<input type="checkbox" id="${id}"><span class="sw${likw?' likw':''}" style="background:${g.color};color:${g.color}"></span><span>${g.label}</span><span class="cnt">${g.segs.length}</span>`;
       const cb=lab.querySelector('input'); cb.checked = groupsObj[g.id].visible;
       cb.addEventListener('change',()=>{groupsObj[g.id].visible=cb.checked;});
-      box.appendChild(lab);
+      b.appendChild(lab);
     });
   });
-  [['L_wist','#9c6b3f','Studnie istn. kanalizacji (mapa: właz / dno)',(D.wells_istn||[]).length,()=>wIstObj],['L_uzbr','#2e7d32','Uzbrojenie istn. z mapy (zasuwy, hydranty, kratki, studzienki tt, szafy, latarnie)',(D.uzbr||[]).length,()=>uzObj],['L_kna','#a0703c','Komory i studnie KO w rzeczywistych wymiarach (KNA 07)',(D.knas||[]).length,()=>knaObj],['L_pin','#d00000','Pinezki zmian KNA (zaślepienia, regulatory, załamania)',(D.kpts||[]).length,()=>pinObj]].forEach(([id,col,txt,n,o])=>{
-    const l=document.createElement('label'); l.htmlFor=id; l.innerHTML='<input type="checkbox" id="'+id+'" checked><span class="sw" style="background:'+col+'"></span><span>'+txt+'</span><span class="cnt">'+n+'</span>';
-    l.querySelector('input').addEventListener('change',e=>{o().visible=e.target.checked;}); box.appendChild(l); });
-  const hh=document.createElement('div'); hh.className='grp'; hh.textContent='Obiekt mostowy'; box.appendChild(hh);
-  const lp=document.createElement('label'); lp.htmlFor='L_pp';
-  lp.innerHTML='<input type="checkbox" id="L_pp" checked><span class="sw" style="background:#8f8f8f"></span><span>Przejście podziemne (konstrukcja, palisady, schody, szyby)</span><span class="cnt">'+(D.solids||[]).length+'</span>';
-  lp.querySelector('input').addEventListener('change',e=>{ppObj.visible=e.target.checked;});
-  box.appendChild(lp);
-  [['konstr','#9d9a94','– konstrukcja żelbetowa, pale, schody, szyby'],['dach','#7fb8d0','– zadaszenia i przeszklenia (stal + szkło)']].forEach(([c,col,txt])=>{
-    const l=document.createElement('label'); l.htmlFor='L_pp_'+c; l.style.paddingLeft='18px';
-    l.innerHTML='<input type="checkbox" id="L_pp_'+c+'" checked><span class="sw" style="background:'+col+'"></span><span>'+txt+'</span>';
-    l.querySelector('input').addEventListener('change',e=>{ppCat[c]=e.target.checked; ppApply();}); box.appendChild(l); });
+  const bu=sec('Studnie, uzbrojenie i zmiany KNA');
   const lab=document.createElement('label'); lab.htmlFor='L_wells';
   lab.innerHTML='<input type="checkbox" id="L_wells" checked><span class="sw" style="background:#4a7fc0"></span><span>Studnie KD / KS</span><span class="cnt">'+D.wells.length+'</span>';
   lab.querySelector('input').addEventListener('change',e=>{wellsObj.visible=e.target.checked;});
-  box.appendChild(lab);
+  bu.appendChild(lab);
+  [['L_wist','#9c6b3f','Studnie istn. kanalizacji (mapa: właz / dno)',(D.wells_istn||[]).length,()=>wIstObj],['L_uzbr','#2e7d32','Uzbrojenie istn. z mapy (zasuwy, hydranty, kratki, studzienki tt, szafy, latarnie)',(D.uzbr||[]).length,()=>uzObj],['L_kna','#a0703c','Komory i studnie KO w rzeczywistych wymiarach (KNA 07)',(D.knas||[]).length,()=>knaObj],['L_pin','#d00000','Pinezki zmian KNA (zaślepienia, regulatory, załamania)',(D.kpts||[]).length,()=>pinObj]].forEach(([id,col,txt,n,o])=>{
+    const l=document.createElement('label'); l.htmlFor=id; l.innerHTML='<input type="checkbox" id="'+id+'" checked><span class="sw" style="background:'+col+'"></span><span>'+txt+'</span><span class="cnt">'+n+'</span>';
+    l.querySelector('input').addEventListener('change',e=>{o().visible=e.target.checked;}); bu.appendChild(l); });
+  const bm=sec('Obiekt mostowy');
+  const lp=document.createElement('label'); lp.htmlFor='L_pp';
+  lp.innerHTML='<input type="checkbox" id="L_pp" checked><span class="sw" style="background:#8f8f8f"></span><span>Przejście podziemne (konstrukcja, palisady, schody, szyby)</span><span class="cnt">'+(D.solids||[]).length+'</span>';
+  lp.querySelector('input').addEventListener('change',e=>{ppObj.visible=e.target.checked;});
+  bm.appendChild(lp);
+  [['konstr','#9d9a94','– konstrukcja żelbetowa, pale, schody, szyby'],['dach','#7fb8d0','– zadaszenia i przeszklenia (stal + szkło)']].forEach(([c,col,txt])=>{
+    const l=document.createElement('label'); l.htmlFor='L_pp_'+c; l.style.paddingLeft='18px';
+    l.innerHTML='<input type="checkbox" id="L_pp_'+c+'" checked><span class="sw" style="background:'+col+'"></span><span>'+txt+'</span>';
+    l.querySelector('input').addEventListener('change',e=>{ppCat[c]=e.target.checked; ppApply();}); bm.appendChild(l); });
 }
 function knaList(){
   const box=document.getElementById('knal'); if(!box) return; box.innerHTML='';
@@ -750,5 +791,13 @@ renderer.domElement.addEventListener('pointerup',ev=>{
 function resize(){ const w=host.clientWidth, h=host.clientHeight; renderer.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix(); }
 new ResizeObserver(resize).observe(host);
 build(); panel(); knaList(); marksList(); vAll(); resize();
-(function loop(){ requestAnimationFrame(loop); ctl.update(); renderer.render(scene,cam); })();
+const cNeedle=document.getElementById('cneedle'); let cAng=null;
+function compassUpd(){ const t=ctl.target, d=cam.position.distanceTo(t)*0.2||1;
+  const a=t.clone().project(cam), n=t.clone().add(new THREE.Vector3(0,0,-d)).project(cam);
+  const dx=(n.x-a.x)*renderer.domElement.clientWidth, dy=-(n.y-a.y)*renderer.domElement.clientHeight;
+  if(Math.hypot(dx,dy)<1e-6) return; const ang=Math.atan2(dx,-dy)*180/Math.PI;
+  if(cAng===null||Math.abs(ang-cAng)>0.05){ cAng=ang; cNeedle.setAttribute('transform','rotate('+ang.toFixed(2)+')'); } }
+document.getElementById('compass').onclick=()=>{ const t=ctl.target, off=cam.position.clone().sub(t); const r=Math.hypot(off.x,off.z);
+  cam.position.set(t.x, cam.position.y, t.z+Math.max(r,0.01)); ctl.update(); };
+(function loop(){ requestAnimationFrame(loop); ctl.update(); renderer.render(scene,cam); compassUpd(); })();
 </script>
