@@ -18,6 +18,21 @@ body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:14p
 .hud{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:12px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
 .hud h1{font-size:18px;font-weight:600;margin:0;letter-spacing:.01em;text-wrap:balance}
 .hud .sub{font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+#winfo{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:84px;z-index:6;width:min(360px,calc(100% - 24px));max-height:calc(100% - 140px);overflow:auto;background:var(--panel);border:1px solid var(--line);box-shadow:0 4px 16px rgba(0,0,0,.2);font-size:13px;color:var(--ink)}
+#winfo .wh{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--line);font-size:14px}
+#winfo .wh button{border:0;background:none;font-size:20px;line-height:1;cursor:pointer;color:var(--muted);padding:2px 6px}
+#winfo table{border-collapse:collapse;width:100%;font-family:var(--f-mono);font-size:12px;font-variant-numeric:tabular-nums}
+#winfo th{text-align:left;font-weight:500;color:var(--muted);padding:4px 10px;vertical-align:top;width:44%} #winfo td{padding:4px 10px}
+#winfo tr+tr{border-top:1px solid var(--line)} #winfo .wcon{padding:8px 10px 2px;color:var(--muted);font-size:12px}
+#winfo ul{margin:0;padding:0 10px 10px 26px;font-family:var(--f-mono);font-size:11.5px;line-height:1.45}
+#rdlg{position:fixed;inset:0;z-index:40;background:rgba(10,15,20,.45);display:grid;place-items:center;padding:16px}
+#rdlg[hidden]{display:none!important}
+#rdlg .rbox{background:var(--panel);color:var(--ink);border:1px solid var(--line);width:min(440px,100%);padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+#rdlg .rsub{font-size:12px;color:var(--muted)} #rdlg label{display:flex;flex-direction:column;gap:4px;font-size:13px}
+#rdlg select{font:inherit;font-family:var(--f-mono);font-size:13px;padding:6px;background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+#rdlg .rbtn{display:flex;gap:8px;align-items:center} #rdlg .rmsg{font-size:12px;color:var(--crit);min-height:1em}
+#rdlg button{font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+#rdlg button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
 #tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);padding:6px 8px;font-family:var(--f-mono);font-size:11px;max-width:340px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.18)}
 .readout{position:absolute;left:max(12px,env(safe-area-inset-left,0px));bottom:12px;font-family:var(--f-mono);font-size:12px;font-variant-numeric:tabular-nums;background:var(--panel);border:1px solid var(--line);padding:4px 8px;color:var(--ink)}
 .mres{font-family:var(--f-mono);font-size:12px;margin-top:6px;line-height:1.5;font-variant-numeric:tabular-nums}
@@ -103,6 +118,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
   <div id="scene">
     <div class="hud"><h1>Owintar etap I – droga, przejście i sieci w 3D</h1><div class="sub">PL-2000/7 · X−7 498 000, Y−5 541 000 · rzędne m n.p.m. · stan po stanowiskach NA: KNA 01, 02, 03, 06, 07 + rzędne i uzbrojenie z mapy do celów proj. – 06.11.2026 · KNA 09 (korekta KD S8–S7, etaż dn225) – 07.11.2026</div></div>
     <div id="tip" hidden></div>
+    <div id="winfo" hidden role="dialog" aria-label="Dane studni"><div class="wh"><b id="wiT"></b><button id="wiX" aria-label="Zamknij">×</button></div><div id="wiB"></div></div>
     <div id="mbar" hidden><span id="mbarTxt"></span><button id="mbFin" hidden>Zakończ</button><button id="mbCancel">Anuluj</button></div>
     <button id="sheetBtn" aria-expanded="false" aria-controls="side">Warstwy i narzędzia</button>
     <button id="compass" type="button" title="Północ – kliknij, aby ustawić widok północą do góry" aria-label="Północ – ustaw widok północą do góry"><svg viewBox="-30 -30 60 60" width="56" height="56" aria-hidden="true"><g id="cneedle"><circle r="24" class="cring"/><path d="M-24,0 H24" class="ctick"/><path d="M0,-21 L7,4 L0,0 L-7,4 Z" class="cn"/><path d="M0,21 L7,4 L0,0 L-7,4 Z" class="cs"/></g><text id="cN" text-anchor="middle" dominant-baseline="central" class="ct">N</text></svg></button>
@@ -146,6 +162,9 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
     <section class="note">Nawierzchnia proj. – TIN z warstwic planu warstwicowego (co 2 cm), typy nawierzchni z PZT drogowego. Przejście podziemne wg PW branży mostowej (przekroje A-A, B-B; plan z PZT) – schody wschodnie i szyby w geometrii przybliżonej. Sieci proj. wg profili PW (EPI-Graf), sieci i kable istn. z mapy (xref 01_MDCP), kable proj. z PZT branż E i T. Kanalizacja istn. – rzędne dna z mapy; wodociąg, gaz, ciepło i kable istn. – głębokości normatywne (do odkrywki). Linie przerywane w legendzie = do likwidacji / demontażu. Opracowanie robocze nadzoru autorskiego, 30.10.2026.</section>
   </aside>
 </div>
+<div id="rdlg" hidden role="dialog" aria-modal="true" aria-labelledby="rdT"><div class="rbox"><b id="rdT">Profil po trasie</b><div class="rsub" id="rdS"></div>
+<label>Od studni / węzła <select id="rdA"></select></label><label>Do studni / węzła <select id="rdB"></select></label>
+<div class="rmsg" id="rdM" aria-live="polite"></div><div class="rbtn"><button id="rdSwap" type="button">⇄ zamień</button><span style="flex:1"></span><button id="rdC" type="button">Anuluj</button><button id="rdOK" type="button" class="pri">Rysuj profil</button></div></div></div>
 <div id="pmodal" hidden><div class="pbox"><div class="ptool"><b>Profil / przekrój pomocniczy</b><label>Układ <select id="pLay"><option value="pom">pomocniczy</option><option value="pk">Profil Koordynatora</option></select></label><label class="pomOnly">Arkusz <select id="pPaper"><option>A4</option><option>A3</option></select></label><span class="zoomb"><button id="pZm" aria-label="Pomniejsz arkusz">−</button><button id="pZp" aria-label="Powiększ arkusz">+</button></span><label class="pomOnly">Przewyższenie <select id="pEx"><option value="auto">auto</option><option value="1">×1</option><option value="2">×2</option><option value="5">×5</option><option value="10">×10</option><option value="20">×20</option></select></label><span style="flex:1"></span><span id="pMsg" class="pmsg" aria-live="polite"></span><button id="pPdf">Zapisz PDF</button><button id="pDxf" class="pkOnly" hidden>DXF</button><button id="pPsj" class="pkOnly" hidden title="Projekt do otwarcia w programie Profil Sieci">Projekt Profil Sieci</button><button id="pClose">Zamknij</button></div><div id="psvg"></div></div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>/* Profil Sieci – model danych i obliczenia profilu. */
@@ -3179,7 +3198,7 @@ renderer.domElement.addEventListener('pointermove',ev=>{
   else if(hit.object.userData.wist){const w=hit.object.userData.wist[hit.instanceId]; txt=`<b>Studnia istn. kanalizacji (mapa)</b><br>${w[5]}`;}
   else if(hit.object.userData.uzbr){const u=hit.object.userData.uzbr[hit.instanceId]; txt=`<b>${u[6]}</b><br>${u[8]}`;}
   else if(hit.object.userData.wist1){txt=`<b>Komora / studzienka istn. (mapa)</b><br>${hit.object.userData.wist1[5]}`;}
-  else if(hit.object.userData.wells){const w=D.wells[hit.instanceId]; txt=w?`<b>Studnia</b><br>${w[5]}`:'Studnia / komora';}
+  else if(hit.object.userData.wells){const w=D.wells[hit.instanceId]; txt=w?`<b>Studnia ${SHORT(w[5])}</b> · ${w[6]||''} DN${Math.round(w[4]*2000)}<br>właz ${fmt(w[3])} · dno ${fmt(wDno(w))} · gł. ${fmt(w[3]-wDno(w))} m<br><i>kliknij – dane studni</i>`:'Studnia / komora';}
   else if(hit.object.userData.bld){ const i=hit.object.userData.bld[hit.faceIndex], b=D.ctx.lod2.info[i]; txt=`<b>Budynek istn. (LOD2 GUGiK)</b><br>wys. ${fmt(b.h,1)} m · podstawa ${fmt(b.zmin)} · najwyższy punkt ${fmt(b.zmax)}<br>punkt: H ${fmt(w.H)}`; }
   tip.innerHTML=txt; tip.hidden=!txt;
   tip.style.left=Math.min(ev.clientX-r.left+14, r.width-350)+'px'; tip.style.top=(ev.clientY-r.top+14)+'px';
@@ -3327,11 +3346,27 @@ function traceChain(g,i0){
   const after=walk(s0[3],s0[4]), before=walk(s0[0],s0[1]);
   const chain=[]; before.reverse().forEach(o=>chain.push({s:o.s,fwd:!o.fwd})); chain.push({s:s0,fwd:true}); after.forEach(o=>chain.push(o));
   return chain; }
-function buildRoute(g,i0){ const chain=traceChain(g,i0);
+// graf sieci: węzły (klucz 5 cm) z nazwami studni / węzłów
+function netGraph(g){ const key=(x,y)=>Math.round(x*20)+','+Math.round(y*20); const N=new Map();
+  const add=(x,y,z,i,end)=>{ const k=key(x,y); if(!N.has(k)) N.set(k,{k,x,y,z,adj:[],names:[]}); N.get(k).adj.push({i,end}); return N.get(k); };
+  g.segs.forEach((s,i)=>{ const a=add(s[0],s[1],s[2],i,0), b2=add(s[3],s[4],s[5],i,1); const nm=SHORT(s[7]).split('–');
+    if(nm.length===2){ if(nm[0].trim()) a.names.push(nm[0].trim()); if(nm[1].trim()) b2.names.push(nm[1].trim()); } });
+  const wl=(D.wells||[]); N.forEach(n=>{ let best=null; wl.forEach(w=>{ const d=Math.hypot(w[0]-n.x,w[1]-n.y); if(d<Math.max(w[4],0.6)+0.35&&(!best||d<best.d)) best={d,w}; });
+    n.well=best?best.w:null; const cnt={}; n.names.forEach(x=>cnt[x]=(cnt[x]||0)+1); const top=Object.keys(cnt).sort((p,q)=>cnt[q]-cnt[p])[0];
+    n.name=best?SHORT(best.w[5]):(top||''); });
+  return {N,key}; }
+function natCmp(a,b){ return a.localeCompare(b,'pl',{numeric:true,sensitivity:'base'}); }
+function pathChain(g,G,kA,kB){ if(kA===kB) return null; const dist=new Map([[kA,0]]), prev=new Map(), Q=new Set([kA]);
+  while(Q.size){ let u=null; Q.forEach(k=>{ if(u===null||dist.get(k)<dist.get(u)) u=k; }); Q.delete(u); if(u===kB) break;
+    G.N.get(u).adj.forEach(({i,end})=>{ const s=g.segs[i], v=end===0?G.key(s[3],s[4]):G.key(s[0],s[1]); const L=Math.hypot(s[3]-s[0],s[4]-s[1]);
+      const nd=dist.get(u)+L; if(!dist.has(v)||nd<dist.get(v)-1e-9){ dist.set(v,nd); prev.set(v,{u,i,fwd:end===0}); Q.add(v); } }); }
+  if(!dist.has(kB)) return null; const ch=[]; let v=kB; while(v!==kA){ const p=prev.get(v); ch.unshift({s:g.segs[p.i],fwd:p.fwd}); v=p.u; } return ch; }
+function buildRoute(g,i0){ return buildRouteChain(g,traceChain(g,i0),false); }
+function buildRouteChain(g,chain,keepDir){
   const nodes=[]; chain.forEach((o,k)=>{ const s=o.s; const A=o.fwd?[s[0],s[1],s[2]]:[s[3],s[4],s[5]], B=o.fwd?[s[3],s[4],s[5]]:[s[0],s[1],s[2]];
     if(k===0) nodes.push(A); nodes.push(B); });
   // odwrócenie, by pikietaż rósł od niższego końca
-  if(nodes[0][2]>nodes[nodes.length-1][2]){ nodes.reverse(); chain.reverse(); chain.forEach(o=>o.fwd=!o.fwd); }
+  if(!keepDir && nodes[0][2]>nodes[nodes.length-1][2]){ nodes.reverse(); chain.reverse(); chain.forEach(o=>o.fwd=!o.fwd); }
   const pts=nodes.map(n=>[n[0],n[1]]), ch=chainOf(pts);
   const legs=chain.map((o,k)=>({c0:ch[k],c1:ch[k+1],z0:nodes[k][2],z1:nodes[k+1][2],r:o.s[6],rv:vR(o.s),lab:SHORT(o.s[7]),desc:o.s[7]}));
   const wl=[]; wellsAll().forEach(w=>{ const p=projOnPoly(pts,ch,[w.x,w.y]); if(p&&p.d<Math.max(w.r,0.6)+0.3) wl.push(Object.assign({c:p.c},w)); });
@@ -3373,7 +3408,7 @@ const wrapTxt=(t,n,m)=>{ const ws=t.split(' '), L=[]; let cur=''; for(const w of
   return L.map(l=>l.length>n? l.slice(0,n-1)+'…' : l); };
 function drawProfile(Pr,paper,exSel){
   const [PW,PH]=PAPER[paper]; const M=10, HEAD=40, rows=Pr.mode==='route'?['Rzędna terenu istn.','Rzędna terenu proj.','Rzędna osi przewodu','Spadek, Ø, długość','Odległości']:['Rzędna terenu istn.','Rzędna terenu proj.','Odległości'];
-  const RH=10, bandH=rows.length*RH, TB=26;
+  const RH=10, bandH=rows.length*RH, TB=paper==='A3'?52:42;
   const x0=M+HEAD, x1=PW-M, yBandTop=PH-M-TB-4-bandH, yPlotTop=M+8, LAB=Math.min(55,(yBandTop-yPlotTop)*0.42);
   const plotW=x1-x0-4;
   // skala pozioma
@@ -3451,17 +3486,36 @@ function drawProfile(Pr,paper,exSel){
   T(tx+2,ty+16.4,`Opracował: mgr inż. Aleksander Bury · ${new Date().toLocaleDateString('pl-PL')}`,{fs:2.2});
   T(tx+2,ty+20.4,'Rzędne wg modelu 3D: sieci proj. – PW i karty KNA, istn. – mapa do c.p. (orientacyjne);',{fs:1.85,col:'#444'});
   T(tx+2,ty+23.6,'przed robotami potwierdzić odkrywkami. Opracowanie pomocnicze – nie zastępuje projektu.',{fs:1.85,col:'#444'});
-  // legenda
-  const lx=M, ly=PH-M-TB+3; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx+i*55,ly,lx+i*55+8,ly,q[0],0.5); T(lx+i*55+10,ly+0.8,q[1],{fs:2.1}); });
-  T(lx,ly+5,'Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy).',{fs:2.0});
-  // mini-plan
-  const mp={x:lx, y:ly+7, w:Math.min(tx-lx-6,60), h:TB-10}; o.push(`<rect x="${mp.x}" y="${mp.y}" width="${mp.w}" height="${mp.h}" fill="#f6f6f6" stroke="#999" stroke-width="0.2"/>`);
-  { const xs_=Pr.pts.map(p=>p[0]), ys_=Pr.pts.map(p=>p[1]); const cx=(Math.min(...xs_)+Math.max(...xs_))/2, cy=(Math.min(...ys_)+Math.max(...ys_))/2;
-    const span=Math.max(Math.max(...xs_)-Math.min(...xs_),Math.max(...ys_)-Math.min(...ys_),20)*1.3; const k=Math.min(mp.w,mp.h)/span;
-    const MX=x=>mp.x+mp.w/2+(x-cx)*k, MY=y=>mp.y+mp.h/2-(y-cy)*k;
-    o.push(`<clipPath id="mpc"><rect x="${mp.x}" y="${mp.y}" width="${mp.w}" height="${mp.h}"/></clipPath><g clip-path="url(#mpc)">`);
-    D.groups.filter(g=>g.kind!=='istn_likw'&&!/^(E|T)_/.test(g.id)).forEach(g=>g.segs.forEach(s=>{ if(Math.abs(s[0]-cx)<span&&Math.abs(s[1]-cy)<span) Ln(MX(s[0]),MY(s[1]),MX(s[3]),MY(s[4]),g.color,0.15); }));
-    Pl(Pr.pts.map(p=>[MX(p[0]),MY(p[1])]),'#e00',0.5); T(MX(Pr.pts[0][0]),MY(Pr.pts[0][1])-0.8,'0',{fs:2,col:'#e00',w:700}); o.push('</g>'); T(mp.x+mp.w+1,mp.y+2.5,'plan (N↑)',{fs:1.8,col:'#555'}); }
+  // mapka lokalizacji (lewy dół): podkład drogowy, mapa, sieci, trasa profilu
+  const ty0=PH-M-TB, mpw=Math.min(paper==='A3'?200:110, tx-M-(paper==='A3'?80:60)), mp={x:M, y:ty0, w:mpw, h:TB};
+  o.push(`<rect x="${mp.x}" y="${mp.y}" width="${mp.w}" height="${mp.h}" fill="#fff" stroke="#111" stroke-width="0.35"/>`);
+  { const xs_=Pr.pts.map(p=>p[0]), ys_=Pr.pts.map(p=>p[1]); const bx0=Math.min(...xs_), bx1=Math.max(...xs_), by0=Math.min(...ys_), by1=Math.max(...ys_);
+    const cx=(bx0+bx1)/2, cy=(by0+by1)/2, ih=mp.h-6, iw=mp.w-2;
+    const k=Math.min(iw/Math.max((bx1-bx0)*1.25,30), ih/Math.max((by1-by0)*1.25,30));
+    const MX=x=>mp.x+1+iw/2+(x-cx)*k, MY=y=>mp.y+5+ih/2-(y-cy)*k, hx=iw/2/k+2, hy=ih/2/k+2, inb=(x,y)=>Math.abs(x-cx)<hx&&Math.abs(y-cy)<hy;
+    o.push(`<clipPath id="mpc"><rect x="${mp.x+0.2}" y="${mp.y+5}" width="${mp.w-0.4}" height="${mp.h-5.2}"/></clipPath><g clip-path="url(#mpc)">`);
+    const R=D.road; if(R){ const pal=R.classes.map(c=>c.c); const pp=[];
+      R.t.forEach((t,ti)=>{ const v0=R.v[t[0]]; if(!inb(v0[0],v0[1])) return; pp.push(`<path d="M${t.map(q=>MX(R.v[q][0]).toFixed(2)+' '+MY(R.v[q][1]).toFixed(2)).join('L')}Z" fill="${pal[R.c[ti]]}" fill-opacity="0.35" stroke="${pal[R.c[ti]]}" stroke-opacity="0.35" stroke-width="0.05"/>`); });
+      o.push(pp.join('')); R.lines.forEach(l=>{ if(!l.p.some(q=>inb(q[0],q[1]))) return; Pl(l.p.map(q=>[MX(q[0]),MY(q[1])]),'#4a4a4a',0.14); }); }
+    if(D.mdcp) D.mdcp.lines.forEach(L=>{ if(L[0]!==0) return; const s=L[2]; if(!inb(s[0],s[1])&&!inb(s[3],s[4])) return; Ln(MX(s[0]),MY(s[1]),MX(s[3]),MY(s[4]),'#9a9a9a',0.08); });
+    D.groups.filter(g=>g.kind!=='istn_likw'&&!/^(E|T)_/.test(g.id)&&!g.kna).forEach(g=>g.segs.forEach(s=>{ if(inb(s[0],s[1])||inb(s[3],s[4])) { const own=g.id===(Pr.g&&Pr.g.id); o.push(`<line x1="${MX(s[0]).toFixed(2)}" y1="${MY(s[1]).toFixed(2)}" x2="${MX(s[3]).toFixed(2)}" y2="${MY(s[4]).toFixed(2)}" stroke="${g.color}" stroke-width="${own?0.35:0.12}" stroke-opacity="${own?1:0.45}"/>`); } }));
+    (D.wells||[]).forEach(w=>{ if(!inb(w[0],w[1])||(Pr.g&&w[6]&&!String(Pr.g.id).startsWith(w[6]))) return; o.push(`<circle cx="${MX(w[0]).toFixed(2)}" cy="${MY(w[1]).toFixed(2)}" r="0.55" fill="#fff" stroke="#2b5aa0" stroke-width="0.15"/>`); });
+    Pl(Pr.pts.map(p=>[MX(p[0]),MY(p[1])]),'#fff',1.6); Pl(Pr.pts.map(p=>[MX(p[0]),MY(p[1])]),'#e00',0.8);
+    const lbl=(p,t,dy)=>{ if(!t) return; const x=MX(p[0]), y=MY(p[1]); o.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="0.9" fill="#e00"/>`);
+      o.push(`<text x="${(x+1.4).toFixed(2)}" y="${(y+dy).toFixed(2)}" font-size="2.6" font-weight="700" fill="#c00" stroke="#fff" stroke-width="0.6" paint-order="stroke" font-family="Arial,Helvetica,sans-serif">${esc(t)}</text>`); };
+    const nm=w=>w?SHORT(w.lab||w.desc):'';
+    const wFirst=Pr.wl.filter(w=>w.kind==='proj').sort((a,b)=>a.c-b.c), sName=Pr.from||(wFirst.length&&wFirst[0].c<1.5?nm(wFirst[0]):'pocz.'), eName=Pr.to||(wFirst.length&&wFirst[wFirst.length-1].c>Pr.L-1.5?nm(wFirst[wFirst.length-1]):'koniec');
+    lbl(Pr.pts[0],sName+' (0,00)',-1.2); lbl(Pr.pts[Pr.pts.length-1],eName+' ('+f2(Pr.L)+')',3);
+    o.push('</g>');
+    T(mp.x+1.5,mp.y+3.6,'Lokalizacja profilu – plan',{fs:2.5,w:700});
+    // strzałka N i podziałka
+    const nx=mp.x+mp.w-5, ny=mp.y+10; o.push(`<path d="M${nx} ${ny-4} L${nx-1.6} ${ny+1.5} L${nx} ${ny} L${nx+1.6} ${ny+1.5} Z" fill="#111"/>`); T(nx,ny-4.8,'N',{fs:2.4,w:700,anc:'middle'});
+    const nice=[5,10,20,25,50,100,200,250,500]; const sl=nice.find(v=>v*k>=14)||nice[nice.length-1]; const sx0=mp.x+mp.w-4-sl*k, sy0=mp.y+mp.h-2.5;
+    o.push(`<rect x="${sx0.toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#111"/><rect x="${(sx0+sl*k/2).toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#fff" stroke="#111" stroke-width="0.15"/>`);
+    T(sx0,sy0-1.6,'0',{fs:1.9,anc:'middle'}); T(sx0+sl*k,sy0-1.6,sl+' m',{fs:1.9,anc:'middle'}); }
+  // legenda (między mapką a tabliczką)
+  const lx=mp.x+mp.w+4, lw=tx-lx-4, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
+  wrapTxt('Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy). Na mapce: podkład – nawierzchnie i krawężniki drogi proj., mapa do c.p., sieci; czerwona linia – trasa profilu.',Math.max(30,Math.floor(lw/1.0)),8).forEach((s,i)=>T(lx,ly+10+i*3.1,s,{fs:2.0}));
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PW} ${PH}" width="${PW}mm" height="${PH}mm">${o.join('')}</svg>`;
 }
 
@@ -3551,8 +3605,58 @@ renderer.domElement.addEventListener('pointerup',ev=>{
   if(secMode){ const now=performance.now(); if(now-lastUp<320 && spts.length>=2){ lastUp=0; finishSec(); return; } lastUp=now;
     const p=groundXY(ev); if(!p) return; spts.push(p); drawSecLine(); pres.textContent=`Przekrój: ${spts.length} pkt – „Zakończ”`+(NARROW.matches?'.':' / Enter / dwuklik.'); return; }
   if(routeMode){ const [hit]=pick(ev); if(!hit||!hit.object.userData.g||hit.instanceId===undefined){ pres.textContent='Profil po trasie: wskaż rurę (warstwę sieci).'; return; }
-    const g=hit.object.userData.g; const Pr=buildRoute(g,hit.instanceId); spts=Pr.pts; drawSecLine(); setMode(null); pres.textContent=`Profil: ${g.label} – ${Pr.legs.length} odc., ${fmt(Pr.L)} m.`; openProf(Pr); }
+    routeDlg(hit.object.userData.g, hit.instanceId); }
 });
+
+// ===================== wybór studni początkowej i końcowej profilu =====================
+const rdlg=document.getElementById('rdlg'), rdA=document.getElementById('rdA'), rdB=document.getElementById('rdB'), rdM=document.getElementById('rdM'); let rdCtx=null;
+function routeDlg(g,i0){ const G=netGraph(g); const chain=traceChain(g,i0);
+  const ends=(()=>{ const f=chain[0], l=chain[chain.length-1]; const a=f.fwd?G.key(f.s[0],f.s[1]):G.key(f.s[3],f.s[4]), b2=l.fwd?G.key(l.s[3],l.s[4]):G.key(l.s[0],l.s[1]); return [a,b2]; })();
+  let A=ends[0], B=ends[1]; if(G.N.get(A).z>G.N.get(B).z){ const t=A; A=B; B=t; }
+  const opts=[...G.N.values()].filter(n=>n.name||n.k===A||n.k===B).map(n=>({k:n.k,t:(n.name||'węzeł bez nazwy')+(n.well?' · dno '+fmt(wDno(n.well)):' · oś '+fmt(n.z))}))
+    .sort((p,q)=>natCmp(p.t,q.t));
+  const fill=(sel,v)=>{ sel.innerHTML=opts.map(o=>`<option value="${o.k}">${esc(o.t)}</option>`).join(''); sel.value=v; };
+  fill(rdA,A); fill(rdB,B); rdCtx={g,G};
+  document.getElementById('rdT').textContent='Profil po trasie – '+g.label; document.getElementById('rdS').textContent=`Wybierz studnię (węzeł) początkową i końcową. Domyślnie – odcinek od wskazanej rury do najbliższych rozgałęzień. `;
+  rdM.textContent=''; rdlg.hidden=false; rdA.focus(); }
+document.getElementById('rdSwap').onclick=()=>{ const t=rdA.value; rdA.value=rdB.value; rdB.value=t; };
+document.getElementById('rdC').onclick=()=>{ rdlg.hidden=true; clearSec(); setMode(null); };
+document.getElementById('rdOK').onclick=()=>{ if(!rdCtx) return; const {g,G}=rdCtx; if(rdA.value===rdB.value){ rdM.textContent='Wybierz dwie różne studnie.'; return; }
+  const ch=pathChain(g,G,rdA.value,rdB.value); if(!ch){ rdM.textContent='Brak połączenia między wybranymi studniami w tej sieci.'; return; }
+  const Pr=buildRouteChain(g,ch,true); const nA=G.N.get(rdA.value).name, nB=G.N.get(rdB.value).name;
+  Pr.from=nA; Pr.to=nB; Pr.sub=`${Pr.legs.length} odc. · długość ${fmt(Pr.L)} m · od ${nA||'węzła'} do ${nB||'węzła'}`;
+  rdlg.hidden=true; spts=Pr.pts; drawSecLine(); setMode(null); pres.textContent=`Profil: ${g.label} – ${nA} → ${nB}, ${Pr.legs.length} odc., ${fmt(Pr.L)} m.`; openProf(Pr); };
+rdlg.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.stopPropagation(); document.getElementById('rdC').click(); } if(e.key==='Enter'&&e.target.tagName!=='BUTTON') document.getElementById('rdOK').click(); });
+
+// ===================== studnie projektowane – karta danych =====================
+const winfo=document.getElementById('winfo'); let wSel=null;
+function wDno(w){ const m=String(w[5]).match(/dno\s+(\d+[.,]\d+)/); return m?parseFloat(m[1].replace(',','.')):w[2]; }
+function pipeDN(desc){ const m=String(desc).match(/DN\s*(\d+)/i)||String(desc).match(/[dø]n?\s*(\d{2,3})\b/i); return m?+m[1]:null; }
+function wellCard(i){ const w=D.wells[i]; if(!w) return; const nm=SHORT(w[5]), net=w[6]||'', X=w[0]+D.origin[0], Y=w[1]+D.origin[1];
+  const ti=terAt(w[0],w[1]), tp=projAt(w[0],w[1]); const rows=[];
+  const R_=(k,v)=>rows.push(`<tr><th>${k}</th><td>${v}</td></tr>`);
+  R_('Sieć', net==='KD'?'kanalizacja deszczowa (KD)':net==='KS'?'kanalizacja sanitarna (KS)':esc(net));
+  R_('Średnica studni', 'DN'+Math.round(w[4]*2000));
+  R_('Rzędna włazu', fmt(w[3])+' m n.p.m.'); R_('Rzędna dna (kinety)', fmt(wDno(w))+' m n.p.m.'); R_('Głębokość', fmt(w[3]-wDno(w))+' m');
+  if(tp!==null) R_('Teren proj. (nawierzchnia)', fmt(tp)); if(ti!==null) R_('Teren istn.', fmt(ti));
+  R_('Współrzędne PL-2000/7', `X ${fmt(X)}<br>Y ${fmt(Y)}`);
+  const extra=w[5].split('  ').slice(1).join(' · '); if(extra) R_('Opis', esc(extra));
+  const con=[]; D.groups.filter(g=>g.kind!=='istn'&&g.kind!=='istn_likw').forEach(g=>g.segs.forEach(s=>{
+    const dA=Math.hypot(s[0]-w[0],s[1]-w[1]), dB=Math.hypot(s[3]-w[0],s[4]-w[1]), lim=Math.max(w[4],0.6)+0.35; if(dA>lim&&dB>lim) return;
+    const atA=dA<=dB, dn=pipeDN(s[7]), r_in=dn?dn/2000:s[6], z=atA?s[2]:s[5], L=Math.hypot(s[3]-s[0],s[4]-s[1]), i_=L?(s[2]-s[5])/L*100:0;
+    const out=atA? i_>=0 : i_<0;
+    con.push(`<li><b>${esc(SHORT(s[7]))}</b> ${dn?'DN'+dn:''} – ${out?'odpływ':'dopływ'}, dno w studni ${fmt(z-r_in)}, L=${fmt(L)} m, i=${fmt(Math.abs(i_),2)}%</li>`); }));
+  document.getElementById('wiT').textContent='Studnia '+nm;
+  document.getElementById('wiB').innerHTML=`<table>${rows.join('')}</table>`+(con.length?`<div class="wcon">Przewody w studni:</div><ul>${con.join('')}</ul>`:'');
+  winfo.hidden=false; wSel=i; wellMark(i); }
+let wMark=null;
+function wellMark(i){ if(wMark){ root.remove(wMark); wMark=null; } if(i===null||i===undefined) return; const w=D.wells[i];
+  const g=new THREE.TorusGeometry(Math.max(w[4],0.6)+0.25,0.06,8,40); wMark=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:css('--accent')}));
+  wMark.rotation.x=Math.PI/2; wMark.position.copy(P(w[0],w[1],w[3]+0.05)); root.add(wMark); }
+document.getElementById('wiX').onclick=()=>{ winfo.hidden=true; wellMark(null); wSel=null; };
+renderer.domElement.addEventListener('pointerup',ev=>{
+  if(measuring||secMode||routeMode||!downAt||Math.hypot(ev.clientX-downAt[0],ev.clientY-downAt[1])>5) return;
+  const [hit]=pick(ev); if(hit&&hit.object.userData.wells&&hit.instanceId!==undefined) wellCard(hit.instanceId); });
 
 // ===================== telefon: szuflada panelu, opis po stuknięciu =====================
 const side=document.getElementById('side'), sheetBtn=document.getElementById('sheetBtn');
