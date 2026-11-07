@@ -165,7 +165,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 <div id="rdlg" hidden role="dialog" aria-modal="true" aria-labelledby="rdT"><div class="rbox"><b id="rdT">Profil po trasie</b><div class="rsub" id="rdS"></div>
 <label>Od studni / węzła <select id="rdA"></select></label><label>Do studni / węzła <select id="rdB"></select></label>
 <div class="rmsg" id="rdM" aria-live="polite"></div><div class="rbtn"><button id="rdSwap" type="button">⇄ zamień</button><span style="flex:1"></span><button id="rdC" type="button">Anuluj</button><button id="rdOK" type="button" class="pri">Rysuj profil</button></div></div></div>
-<div id="pmodal" hidden><div class="pbox"><div class="ptool"><b>Profil / przekrój pomocniczy</b><label>Układ <select id="pLay"><option value="pom">pomocniczy</option><option value="pk">Profil Koordynatora</option></select></label><label class="pomOnly">Arkusz <select id="pPaper"><option>A4</option><option>A3</option></select></label><span class="zoomb"><button id="pZm" aria-label="Pomniejsz arkusz">−</button><button id="pZp" aria-label="Powiększ arkusz">+</button></span><label class="pomOnly">Przewyższenie <select id="pEx"><option value="auto">auto</option><option value="1">×1</option><option value="2">×2</option><option value="5">×5</option><option value="10">×10</option><option value="20">×20</option></select></label><span style="flex:1"></span><span id="pMsg" class="pmsg" aria-live="polite"></span><button id="pPdf">Zapisz PDF</button><button id="pDxf" class="pkOnly" hidden>DXF</button><button id="pPsj" class="pkOnly" hidden title="Projekt do otwarcia w programie Profil Sieci">Projekt Profil Sieci</button><button id="pClose">Zamknij</button></div><div id="psvg"></div></div></div>
+<div id="pmodal" hidden><div class="pbox"><div class="ptool"><b>Profil / przekrój pomocniczy</b><label>Układ <select id="pLay"><option value="pom">pomocniczy</option><option value="pk">Profil Koordynatora</option></select></label><label class="pomOnly">Arkusz <select id="pPaper"><option value="auto">auto 1:500/1:100 (297×A3/580/765…)</option><option>A3</option><option>A4</option></select></label><span class="zoomb"><button id="pZm" aria-label="Pomniejsz arkusz">−</button><button id="pZp" aria-label="Powiększ arkusz">+</button></span><label class="pomOnly">Przewyższenie <select id="pEx"><option value="auto">auto</option><option value="1">×1</option><option value="2">×2</option><option value="5">×5</option><option value="10">×10</option><option value="20">×20</option></select></label><span style="flex:1"></span><span id="pMsg" class="pmsg" aria-live="polite"></span><button id="pPdf">Zapisz PDF</button><button id="pDxf" class="pkOnly" hidden>DXF</button><button id="pPsj" class="pkOnly" hidden title="Projekt do otwarcia w programie Profil Sieci">Projekt Profil Sieci</button><button id="pClose">Zamknij</button></div><div id="psvg"></div></div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>/* Profil Sieci – model danych i obliczenia profilu. */
 window.PS = window.PS || {};
@@ -3387,6 +3387,10 @@ function buildRouteChain(g,chain,keepDir){
 
 // ===================== rysunek SVG (mm) =====================
 const PAPER={A4:[297,210],A3:[420,297]};
+// format „auto”: wys. 297 mm, szerokość A3 lub 580 + n×185 mm – dobór do skali 1:500 / 1:100
+function profSize(Pr,paper){ if(paper!=='auto') return PAPER[paper];
+  const need=30+40+4+112+6+10+4+Pr.L*2; if(need<=420) return [420,297];
+  for(let W=580; W<=3000; W+=185) if(need<=W) return [W,297]; return [2985,297]; }
 const HS=[50,100,200,250,500,1000,2000,2500,5000], VS=[10,20,25,50,100,200,250,500,1000];
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const f2=v=>(v===null||v===undefined||isNaN(v))?'–':v.toFixed(2).replace('.',',');
@@ -3419,32 +3423,33 @@ const wrapTxt=(t,n,m)=>{ const ws=t.split(' '), L=[]; let cur=''; for(const w of
   if(L.length>m){ const k=L.slice(0,m); k[m-1]=(k[m-1]+' '+L.slice(m).join(' ')).slice(0,Math.max(4,n-1)).replace(/\s+\S*$/,'')+'…'; return k; }
   return L.map(l=>l.length>n? l.slice(0,n-1)+'…' : l); };
 function drawProfile(Pr,paper,exSel){
-  const [PW,PH]=PAPER[paper]; const M=10, HEAD=40, rows=Pr.mode==='route'?['Rzędna terenu istn.','Rzędna terenu proj.','Rzędna osi przewodu','Spadek, Ø, długość','Odległości']:['Rzędna terenu istn.','Rzędna terenu proj.','Odległości'];
+  const [PW,PH]=profSize(Pr,paper); const M=10, ML=30, HEAD=40, AUTO=paper==='auto', rows=Pr.mode==='route'?['Rzędna terenu istn.','Rzędna terenu proj.','Rzędna osi przewodu','Spadek, Ø, długość','Odległości']:['Rzędna terenu istn.','Rzędna terenu proj.','Odległości'];
   const RH=10, bandH=rows.length*RH, TB=30;
-  const x0=M+HEAD, x1=PW-M, yBandTop=PH-M-TB-4-bandH, yPlotTop=M+8, LAB=Math.min(55,(yBandTop-yPlotTop)*0.42);
-  const MAPW=paper==='A3'?112:96, MAPH=Math.min(paper==='A3'?112:100, yBandTop-yPlotTop-6), xP=x1-MAPW-6;
+  const x0=ML+HEAD, x1=PW-M, yBandTop=PH-M-TB-4-bandH, yPlotTop=M+8, LAB=Math.min(55,(yBandTop-yPlotTop)*0.42);
+  const MAPW=paper==='A4'?96:112, MAPH=Math.min(paper==='A4'?100:112, yBandTop-yPlotTop-6), xP=x1-MAPW-6;
   const plotW=xP-x0-4;
   // skala pozioma
-  let hs=HS.find(s=>Pr.L*1000/s<=plotW)||HS[HS.length-1]; const sx=1000/hs;
+  let hs=(AUTO? HS.find(s=>s>=500&&Pr.L*1000/s<=plotW) : HS.find(s=>Pr.L*1000/s<=plotW))||HS[HS.length-1]; const sx=1000/hs;
   // zakres rzędnych
   const zs=[]; Pr.surf.te.forEach(p=>zs.push(p[1])); Pr.surf.pr.forEach(p=>p&&zs.push(p[1]));
   Pr.cr.forEach(o=>{zs.push(o.z-o.rv);zs.push(o.z+o.rv);}); Pr.wl.forEach(w=>{zs.push(w.zb);zs.push(w.zt);}); Pr.kn.forEach(k=>{zs.push(k.zb);zs.push(k.zt);}); (Pr.so||[]).forEach(o=>o.runs.forEach(r=>r.forEach(q=>{zs.push(q[1]);zs.push(q[2]);})));
   if(Pr.legs) Pr.legs.forEach(l=>{zs.push(Math.min(l.z0,l.z1)-l.rv);zs.push(Math.max(l.z0,l.z1)+l.rv);});
   let zmin=Math.floor((Math.min(...zs)-0.4)*2)/2, zmax=Math.ceil((Math.max(...zs)+0.3)*2)/2;
   const availH=yBandTop-yPlotTop-LAB-4;
-  let vs; if(exSel==='auto'){ vs=VS.find(s=>(zmax-zmin)*1000/s<=availH && 1000/s<=sx*20)||VS.find(s=>(zmax-zmin)*1000/s<=availH)||1000; }
+  let vs; if(exSel==='auto'&&AUTO){ vs=VS.find(s=>s>=100&&(zmax-zmin)*1000/s<=availH)||1000; } else if(exSel==='auto'){ vs=VS.find(s=>(zmax-zmin)*1000/s<=availH && 1000/s<=sx*20)||VS.find(s=>(zmax-zmin)*1000/s<=availH)||1000; }
   else { const e=+exSel; vs=Math.max(1,Math.round(hs/e)); if((zmax-zmin)*1000/vs>availH) vs=Math.ceil((zmax-zmin)*1000/availH); }
   const sy=1000/vs; const yb=yBandTop-4; const zr=yb-(zmax-zmin)*sy<yPlotTop+LAB? zmin : zmin;
   const X=c=>x0+2+c*sx, Y=z=>yb-(z-zmin)*sy;
   const o=[]; const T=(x,y,t,a={})=>o.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${a.fs||2.4}" ${a.rot!==undefined?`transform="rotate(${a.rot} ${x.toFixed(2)} ${y.toFixed(2)})"`:''} text-anchor="${a.anc||'start'}" fill="${a.col||'#111'}" font-weight="${a.w||400}" font-family="Arial,Helvetica,sans-serif">${esc(t)}</text>`);
   const Ln=(a,b,c,d,col='#111',w=0.2,da='')=>o.push(`<line x1="${a.toFixed(2)}" y1="${b.toFixed(2)}" x2="${c.toFixed(2)}" y2="${d.toFixed(2)}" stroke="${col}" stroke-width="${w}" ${da?`stroke-dasharray="${da}"`:''}/>`);
   const Pl=(pp,col,w,da='',fill='none')=>o.push(`<polyline points="${pp.map(p=>p[0].toFixed(2)+','+p[1].toFixed(2)).join(' ')}" fill="${fill}" stroke="${col}" stroke-width="${w}" ${da?`stroke-dasharray="${da}"`:''}/>`);
-  o.push(`<rect x="0" y="0" width="${PW}" height="${PH}" fill="#fff"/>`); o.push(`<rect x="${M-5}" y="${M-5}" width="${PW-2*M+10}" height="${PH-2*M+10}" fill="none" stroke="#111" stroke-width="0.5"/>`);
-  T(M,M+2,Pr.title,{fs:3.6,w:700}); T(M,M+6.5,Pr.sub,{fs:2.3,col:'#444'});
+  o.push(`<rect x="0" y="0" width="${PW}" height="${PH}" fill="#fff"/>`); o.push(`<rect x="${ML-5}" y="${M-5}" width="${PW-ML-M+10}" height="${PH-2*M+10}" fill="none" stroke="#111" stroke-width="0.5"/>`);
+  if(PW>420) for(let fx=25+185; fx<PW-5; fx+=185) Ln(fx,PH,fx,PH-5,"#111",0.25);
+  T(ML,M+2,Pr.title,{fs:3.6,w:700}); T(ML,M+6.5,Pr.sub,{fs:2.3,col:'#444'});
   // siatka rzędnych
   const dz=[0.25,0.5,1,2,5].find(d=>(zmax-zmin)/d<=14)||5;
   for(let z=Math.ceil(zmin/dz)*dz; z<=zmax+1e-6; z+=dz){ Ln(x0,Y(z),X(Pr.L),Y(z),'#d9d9d9',0.15); T(x0-1,Y(z)+0.8,f2(z),{fs:2.1,anc:'end',col:'#555'}); }
-  Ln(x0,Y(zmin),x0,Y(zmax),'#111',0.3); T(M,yb-1,`Poz. por. ${f2(zmin)} m n.p.m.`,{fs:2.1});
+  Ln(x0,Y(zmin),x0,Y(zmax),'#111',0.3); T(ML,yb-1,`Poz. por. ${f2(zmin)} m n.p.m.`,{fs:2.1});
   // teren
   const te=Pr.surf.te.map(p=>[X(p[0]),Y(p[1])]); if(te.length>1) Pl(te,'#8b5a2b',0.35);
   const segsPr=[]; let cur=[]; Pr.surf.pr.forEach(p=>{ if(p){cur.push([X(p[0]),Y(p[1])]);} else if(cur.length){segsPr.push(cur);cur=[];} }); if(cur.length) segsPr.push(cur);
@@ -3493,8 +3498,8 @@ function drawProfile(Pr,paper,exSel){
       T(e.x,e.y+fsE*0.34,e.t,{fs:fsE,w:700,anc:'middle',col:e.col}); }); }
   // pasy opisowe
   const by=r=>yBandTop+r*RH;
-  o.push(`<rect x="${M}" y="${yBandTop}" width="${x1-M}" height="${bandH}" fill="none" stroke="#111" stroke-width="0.3"/>`);
-  rows.forEach((r,i)=>{ Ln(M,by(i),x1,by(i),'#111',0.2); T(M+1,by(i)+RH/2+0.8,r,{fs:2.3,w:600}); }); Ln(x0,yBandTop,x0,yBandTop+bandH,'#111',0.3);
+  o.push(`<rect x="${ML}" y="${yBandTop}" width="${x1-ML}" height="${bandH}" fill="none" stroke="#111" stroke-width="0.3"/>`);
+  rows.forEach((r,i)=>{ Ln(ML,by(i),x1,by(i),'#111',0.2); T(ML+1,by(i)+RH/2+0.8,r,{fs:2.3,w:600}); }); Ln(x0,yBandTop,x0,yBandTop+bandH,'#111',0.3);
   const stations=new Set([0,Pr.L]); Pr.cr.forEach(c=>stations.add(+c.c.toFixed(2))); Pr.wl.forEach(w=>stations.add(+w.c.toFixed(2))); if(Pr.ch&&Pr.mode==='route') Pr.ch.forEach(c=>stations.add(+c.toFixed(2)));
   let st=[...stations].sort((a,b)=>a-b); const st2=[]; st.forEach(c=>{ if(!st2.length||(c-st2[st2.length-1])*sx>2.6||c===Pr.L) st2.push(c); }); st=st2;
   const teAt=c=>{ let b=null; Pr.surf.te.forEach(p=>{ if(!b||Math.abs(p[0]-c)<Math.abs(b[0]-c)) b=p; }); return b&&Math.abs(b[0]-c)<1.5?b[1]:null; };
@@ -3541,7 +3546,7 @@ function drawProfile(Pr,paper,exSel){
     o.push(`<rect x="${sx0.toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#111"/><rect x="${(sx0+sl*k/2).toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#fff" stroke="#111" stroke-width="0.15"/>`);
     T(sx0,sy0-1.6,'0',{fs:1.9,anc:'middle'}); T(sx0+sl*k,sy0-1.6,sl+' m',{fs:1.9,anc:'middle'}); }
   // legenda (między mapką a tabliczką)
-  const lx=M, lw=tx-lx-6, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
+  const lx=ML, lw=tx-lx-6, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
   wrapTxt('Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy). Mapka lokalizacji: podkład – nawierzchnie i krawężniki drogi proj., mapa do c.p., sieci; czerwona linia – trasa profilu.',Math.max(30,Math.floor(lw/1.0)),4).forEach((s,i)=>T(lx,ly+10+i*3.1,s,{fs:2.0}));
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PW} ${PH}" width="${PW}mm" height="${PH}mm">${o.join('')}</svg>`;
 }
@@ -3587,16 +3592,16 @@ function pkPdf(){ const pMsg=document.getElementById('pMsg'); if(!window.jspdf){
   next(); }
 let pZoom=1; const applyZoom=()=>{ const sv=psvg.querySelector('svg'); if(sv) sv.style.width=(pZoom*100)+'%'; };
 document.getElementById('pZp').onclick=()=>{ pZoom=Math.min(4,pZoom*1.5); applyZoom(); }; document.getElementById('pZm').onclick=()=>{ pZoom=Math.max(1,pZoom/1.5); applyZoom(); };
-function openProf(Pr){ curProf=Pr; pkCache=null; pZoom=NARROW.matches?2.25:1; document.getElementById('pMsg').textContent=''; closeSheet(); pPaper.value = Pr.L>110||Pr.cr.length>45 ? 'A3':'A4'; pm.hidden=false; renderProf(); }
+function openProf(Pr){ curProf=Pr; pkCache=null; pZoom=NARROW.matches?2.25:1; document.getElementById('pMsg').textContent=''; closeSheet(); pPaper.value = 'auto'; pm.hidden=false; renderProf(); }
 pPaper.onchange=renderProf; pEx.onchange=renderProf; document.getElementById('pClose').onclick=()=>{pm.hidden=true;};
 document.getElementById('pPdf').onclick=()=>{
-  if(!curProf) return; if(isPK()){ pkPdf(); return; } const paper=pPaper.value, [W,H]=PAPER[paper], svg=drawProfile(curProf,paper,pEx.value);
+  if(!curProf) return; if(isPK()){ pkPdf(); return; } const paper=pPaper.value, [W,H]=profSize(curProf,paper), svg=drawProfile(curProf,paper,pEx.value);
   const pMsg=document.getElementById('pMsg'); if(!window.jspdf){ pMsg.textContent='Brak biblioteki PDF – sprawdź połączenie z internetem.'; return; } pMsg.textContent='Przygotowuję PDF…';
-  const dpi=paper==='A3'?180:220, cw=Math.round(W/25.4*dpi), chh=Math.round(H/25.4*dpi); const img=new Image();
+  const dpi=W>800?120:W>420?150:paper==='A3'?180:220, cw=Math.round(W/25.4*dpi), chh=Math.round(H/25.4*dpi); const img=new Image();
   img.onload=()=>{ const cv=document.createElement('canvas'); cv.width=cw; cv.height=chh; const cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cw,chh); cx.drawImage(img,0,0,cw,chh);
-    const pdf=new jspdf.jsPDF({orientation:'landscape',unit:'mm',format:paper.toLowerCase(),compress:true}); pdf.addImage(cv.toDataURL('image/jpeg',0.9),'JPEG',0,0,W,H,undefined,'FAST');
+    const pdf=new jspdf.jsPDF({orientation:'landscape',unit:'mm',format:[W,H],compress:true}); pdf.addImage(cv.toDataURL('image/jpeg',0.9),'JPEG',0,0,W,H,undefined,'FAST');
     const d=new Date(), p2=n=>String(n).padStart(2,'0');
-    const fn=`${curProf.mode==='route'?'Profil':'Przekroj'}_pomocniczy_${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}_${paper}.pdf`;
+    const fn=`${curProf.mode==='route'?'Profil':'Przekroj'}_pomocniczy_${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}_${W}x${H}.pdf`;
     (async()=>{ let dlc=null; try{ dlc = window.claude&&window.claude.use ? await window.claude.use('downloads') : null; }catch(e){ dlc=null; }
       if(dlc){ try{ await dlc.save({filename:fn, data:pdf.output('blob')}); pMsg.textContent='Zapisano: '+fn; }catch(e){ pMsg.textContent = e&&e.code==='declined' ? 'Zapis anulowany.' : 'Nie udało się zapisać pliku ('+(e&&e.code||'błąd')+').'; } }
       else { pdf.save(fn); pMsg.textContent='Zapisano: '+fn; } })(); };
