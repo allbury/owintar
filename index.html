@@ -1,5 +1,4 @@
 <title>Model sieci Owintar I</title>
-
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -97,6 +96,8 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .ptool select{font:inherit;padding:2px 4px}
 #psvg{overflow:auto;padding:10px;background:#8a9097;flex:1;min-height:0}
 #psvg svg{display:block;width:100%;max-width:none;height:auto;background:#fff;margin:0 auto}
+#psvg svg+svg{margin-top:10px}
+.ptool select:disabled{opacity:.5}
 </style>
 <div class="app">
   <div id="scene">
@@ -145,8 +146,2689 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
     <section class="note">Nawierzchnia proj. – TIN z warstwic planu warstwicowego (co 2 cm), typy nawierzchni z PZT drogowego. Przejście podziemne wg PW branży mostowej (przekroje A-A, B-B; plan z PZT) – schody wschodnie i szyby w geometrii przybliżonej. Sieci proj. wg profili PW (EPI-Graf), sieci i kable istn. z mapy (xref 01_MDCP), kable proj. z PZT branż E i T. Kanalizacja istn. – rzędne dna z mapy; wodociąg, gaz, ciepło i kable istn. – głębokości normatywne (do odkrywki). Linie przerywane w legendzie = do likwidacji / demontażu. Opracowanie robocze nadzoru autorskiego, 30.10.2026.</section>
   </aside>
 </div>
-<div id="pmodal" hidden><div class="pbox"><div class="ptool"><b>Profil / przekrój pomocniczy</b><label>Arkusz <select id="pPaper"><option>A4</option><option>A3</option></select></label><span class="zoomb"><button id="pZm" aria-label="Pomniejsz arkusz">−</button><button id="pZp" aria-label="Powiększ arkusz">+</button></span><label>Przewyższenie <select id="pEx"><option value="auto">auto</option><option value="1">×1</option><option value="2">×2</option><option value="5">×5</option><option value="10">×10</option><option value="20">×20</option></select></label><span style="flex:1"></span><span id="pMsg" class="pmsg" aria-live="polite"></span><button id="pPdf">Zapisz PDF</button><button id="pClose">Zamknij</button></div><div id="psvg"></div></div></div>
+<div id="pmodal" hidden><div class="pbox"><div class="ptool"><b>Profil / przekrój pomocniczy</b><label>Układ <select id="pLay"><option value="pom">pomocniczy</option><option value="pk">Profil Koordynatora</option></select></label><label class="pomOnly">Arkusz <select id="pPaper"><option>A4</option><option>A3</option></select></label><span class="zoomb"><button id="pZm" aria-label="Pomniejsz arkusz">−</button><button id="pZp" aria-label="Powiększ arkusz">+</button></span><label class="pomOnly">Przewyższenie <select id="pEx"><option value="auto">auto</option><option value="1">×1</option><option value="2">×2</option><option value="5">×5</option><option value="10">×10</option><option value="20">×20</option></select></label><span style="flex:1"></span><span id="pMsg" class="pmsg" aria-live="polite"></span><button id="pPdf">Zapisz PDF</button><button id="pDxf" class="pkOnly" hidden>DXF</button><button id="pPsj" class="pkOnly" hidden title="Projekt do otwarcia w programie Profil Sieci">Projekt Profil Sieci</button><button id="pClose">Zamknij</button></div><div id="psvg"></div></div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>/* Profil Sieci – model danych i obliczenia profilu. */
+window.PS = window.PS || {};
+
+PS.util = {
+  uid() { return Math.random().toString(36).slice(2, 10); },
+  num(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    const n = parseFloat(String(v).trim().replace(',', '.'));
+    return isFinite(n) ? n : null;
+  },
+  fix(v, d) { return v === null || v === undefined || !isFinite(v) ? '' : Number(v).toFixed(d); },
+  // spadek w % zaokrąglony jak w PK (domyślnie do 0.1%), bez zbędnych zer: 2.5%, 3%
+  pct(v, d = 1) {
+    if (v === null || !isFinite(v)) return '';
+    let s = Math.abs(v).toFixed(d).replace(/\.?0+$/, '');
+    return (s === '' ? '0' : s) + '%';
+  },
+  // średnica w metrach bez zbędnych zer: 0.2, 0.16, 1.2
+  m(v) { return v === null || !isFinite(v) ? '' : String(+Number(v).toFixed(3)); },
+  esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); },
+  // pole „Rzędna” jak w PK: „@1.6” = wartość względna (zagłębienie / przesunięcie), „$5” = bezwzględna;
+  // bez przedrostka: tryb 'auto10' – wartości ≤ 10 względne, tryb 'at' – zawsze bezwzględne
+  level(s, mode) {
+    s = String(s ?? '').trim();
+    if (!s) return { v: null, rel: false };
+    let rel = null;
+    if (s[0] === '@') { rel = true; s = s.slice(1); } else if (s[0] === '$') { rel = false; s = s.slice(1); }
+    const v = PS.util.num(s);
+    if (v === null) return { v: null, rel: false, bad: true };
+    if (rel === null) rel = mode === 'auto10' && Math.abs(v) <= 10;
+    return { v, rel };
+  },
+};
+function has(v) { return v !== null && v !== undefined; }
+
+/* Katalog sieci (Katalogi › Odcinki / węzły w PK): materiały z typowymi średnicami [m] i studnie. */
+PS.CATALOG = {
+  pipes: [
+    { mat: 'PVC-U SN8', net: 'Kanalizacja', dns: [0.11, 0.16, 0.2, 0.25, 0.315, 0.4, 0.5] },
+    { mat: 'PP SN10', net: 'Kanalizacja', dns: [0.16, 0.2, 0.25, 0.315, 0.4, 0.5, 0.6, 0.8] },
+    { mat: 'Kamionka', net: 'Kanalizacja', dns: [0.15, 0.2, 0.25, 0.3, 0.4, 0.5] },
+    { mat: 'Beton', net: 'Kanalizacja', dns: [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2] },
+    { mat: 'GRP', net: 'Kanalizacja', dns: [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2, 1.4] },
+    { mat: 'PE100 SDR17', net: 'Wodociąg', dns: [0.09, 0.11, 0.125, 0.16, 0.2, 0.225, 0.25, 0.315] },
+    { mat: 'PVC-U PN10', net: 'Wodociąg', dns: [0.09, 0.11, 0.16, 0.225] },
+    { mat: 'Żeliwo sferoidalne', net: 'Wodociąg', dns: [0.08, 0.1, 0.15, 0.2, 0.25, 0.3] },
+    { mat: 'PE100 SDR11', net: 'Sieć gazowa', dns: [0.032, 0.04, 0.063, 0.09, 0.11, 0.125, 0.16] },
+    { mat: 'Stal preizolowana', net: 'Sieć cieplna', dns: [0.05, 0.065, 0.08, 0.1, 0.125, 0.15, 0.2] },
+  ],
+  wells: [
+    { type: 'Studnia', name: 'betonowa DN1000', dn: 1.0 }, { type: 'Studnia', name: 'betonowa DN1200', dn: 1.2 },
+    { type: 'Studnia', name: 'betonowa DN1500', dn: 1.5 }, { type: 'Studnia', name: 'betonowa DN2000', dn: 2.0 },
+    { type: 'Studnia', name: 'PP DN1000', dn: 1.0 }, { type: 'Studzienka', name: 'PP DN425', dn: 0.425 },
+    { type: 'Studzienka', name: 'PP DN600', dn: 0.6 }, { type: 'Wpust', name: 'wpust uliczny DN500', dn: 0.5 },
+  ],
+  forNet(netType) { return this.pipes.filter(c => c.net === netType); },
+};
+// katalog projektu (edytowalny w Konfiguracja › Katalog sieci); brak = katalog wbudowany
+PS.catalogOf = project => {
+  const c = project && project.catalog;
+  if (!c) return PS.CATALOG;
+  return { pipes: c.pipes || PS.CATALOG.pipes, wells: c.wells || PS.CATALOG.wells, forNet(netType) { return this.pipes.filter(q => q.net === netType); } };
+};
+/* Opcje rysunku jak Konfiguracja › Opcje / Tabela › Szczegóły w PK (project.opt nadpisuje wartości domyślne). */
+PS.OPT = {
+  profile: {
+    singleLine: false, // jedna linia sieci (oś) zamiast dwóch linii rury
+    pipeAxis: false, // oś kanału (linia CENTER)
+    wellAxis: true, // osie studni i zbiorników
+    ppBold: true, // pogrubiona linia poziomu porównawczego
+    noProfileName: false, // brak oznaczenia profilu w nagłówku tabeli
+    schema: false, // schemat sieci pod tabelą (plan lokalny: załamania i włączenia)
+    angleText: false, // kąt załamania dołączony do opisu PZ
+    spread: true, // rozsuwanie nachodzących opisów pionowych (z odnośnikiem)
+    wykChainY: null, // położenie łańcucha opisu wykopu: rzędna (> PP) albo cm nad tabelą; puste = nad terenem
+    distChain: false, distChainY: null, // łańcuch wymiarowy odległości między węzłami
+    nodeBubbles: false, nodeBubblesY: null, // nazwy węzłów w kółkach nad rysunkiem
+    terrainLeaders: false, // odnośniki z rzędnymi dodatkowych punktów terenu
+    upperNodes: false, upperCross: false, upperArm: false, // WIELKIE LITERY w opisach pionowych
+    up_kan: false, up_wod: false, up_gaz: false, up_co: false, up_kab: false, up_nadz: false, up_wl: false, up_inne: false, // WIELKIE LITERY wg rodzaju sieci
+    angleMode: 'lp', angleNum: false, // kąt załamania: L/P albo 0–360°, numeracja K1, K2…
+    labelRight: false, // opisy pionowe „za linię” (po prawej stronie rzędnej)
+    aboveTerrainNadz: false, // opisy uzbrojenia naziemnego i napowietrznego nad terenem
+    utilAxisMark: false, // krzyżyk osi uzbrojenia z zagłębieniem „o.=”
+  },
+  table: {
+    noEn: false, // bez opisów po angielsku w tabeli (nazwy wierszy, REFERENCE LEVEL)
+    permille: false, // spadki w promilach
+    slopeDec: 1, // miejsca po przecinku spadku
+    boldSlope: false, // pogrubiona linia spadku
+    mergeSlopes: false, // łączenie odcinków o stałym spadku w jeden opis
+    mm: false, // rzędne z dokładnością do mm
+    distDec: 1, // zaokrąglenie odległości (Mb) w wierszu ODLEGŁOŚCI
+    km: false, // odległości jako kilometraż 0+123.45
+    fromHekto: false, // odległości liczone od ostatniego hektometra
+    coordDec: 2, // zaokrąglenie współrzędnych X/Y w tabeli
+    overlap: true, // kontrola nakładania się tekstów w tabeli
+  },
+  plan: { names: true, coords: false, coordDec: 2, levels: false, segs: true, segMin: 10, flow: true, scale: 500, objects: true },
+};
+PS.optOf = project => {
+  const o = (project && project.opt) || {};
+  return { profile: Object.assign({}, PS.OPT.profile, o.profile), table: Object.assign({}, PS.OPT.table, o.table), plan: Object.assign({}, PS.OPT.plan, o.plan) };
+};
+
+/* Słownik (Konfiguracja › Słownik w PK): wyrażenie → opis podstawowy (PL) / tłumaczenie (EN). Metoda: off | pl | en | both
+   (both = opis dwujęzyczny „Studnia / Manhole”). Zastępowane są całe wyrazy w opisach pionowych. */
+PS.DICT_DEFAULT = [
+  ['Studnia', 'Studnia', 'Manhole'], ['Studzienka', 'Studzienka', 'Inspection chamber'], ['Wpust', 'Wpust', 'Gully'], ['Wylot', 'Wylot', 'Outlet'],
+  ['Komora', 'Komora', 'Chamber'], ['Osadnik', 'Osadnik', 'Settling tank'], ['Separator', 'Separator', 'Separator'], ['Zbiornik', 'Zbiornik', 'Tank'],
+  ['Budynek', 'Budynek', 'Building'], ['Zasuwa', 'Zasuwa', 'Gate valve'], ['Hydrant', 'Hydrant', 'Hydrant'], ['Trójnik', 'Trójnik', 'Tee'],
+  ['Włączenie', 'Włączenie', 'Inlet'], ['Istn.', 'Istn.', 'Exist.'], ['Proj.', 'Proj.', 'Design.'], ['Likw.', 'Likw.', 'Remov.'],
+  ['Kan.', 'Kan.', 'Sewer'], ['Wod.', 'Wod.', 'Water main'], ['Gaz.', 'Gaz.', 'Gas'], ['S.Cieplna', 'Sieć cieplna', 'District heating'],
+  ['Kabel', 'Kabel', 'Cable'], ['Kan. tech.', 'Kanalizacja teletechniczna', 'Telecom duct'], ['Drenaż', 'Drenaż', 'Drainage'],
+  ['sanitarna', 'sanitarna', 'sanitary'], ['deszczowa', 'deszczowa', 'storm'], ['ogólnospławna', 'ogólnospławna', 'combined'],
+  ['energ.', 'energetyczny', 'power'], ['telekom.', 'telekomunikacyjny', 'telecom'], ['typowa', 'typowa', 'standard'],
+  ['Rz.d.', 'Rz.d.', 'IL'], ['Rz.', 'Rz.', 'Lev.'], ['KOLIZJA', 'KOLIZJA', 'CLASH'], ['Rura ochronna', 'Rura ochronna', 'Casing pipe'],
+].map(([expr, pl, en]) => ({ expr, pl, en }));
+PS.dict = {
+  entries(project) { return (project && project.dict && project.dict.entries) || PS.DICT_DEFAULT; },
+  mode(project) { return (project && project.dict && project.dict.mode) || 'off'; },
+  apply(project, s) {
+    const mode = PS.dict.mode(project);
+    if (mode === 'off' || !s) return s;
+    // najdłuższe wyrażenia najpierw (np. „Kan. tech.” przed „Kan.”); granice wyrazu: początek/spacja/znak przestankowy
+    const list = PS.dict.entries(project).filter(e => e.expr).slice().sort((a, b) => b.expr.length - a.expr.length);
+    let out = '', i = 0;
+    const boundary = ch => ch === undefined || /[\s,;:()\/=]/.test(ch);
+    while (i < s.length) {
+      const e = boundary(s[i - 1]) && list.find(q => s.startsWith(q.expr, i) && (boundary(s[i + q.expr.length]) || /[.=]$/.test(q.expr)));
+      if (e) {
+        const pl = e.pl || e.expr, en = e.en || pl;
+        out += mode === 'pl' ? pl : mode === 'en' ? en : (pl === en ? pl : `${pl} / ${en}`);
+        i += e.expr.length;
+      } else out += s[i++];
+    }
+    return out;
+  },
+};
+
+/* Lista rysunków: rysunek = numer, tytuł, wybór profili (etap z tabeli SIEĆ albo lista: „1-5, 8, kol. D1 – Wp1”),
+   skale i ramka (puste = jak w projekcie), arkusze albo profil ciągły. */
+PS.drawings = {
+  create(o = {}) { return Object.assign({ id: PS.util.uid(), no: '', title: '', stage: '', list: '', scaleH: null, scaleV: null, frameH: null, maxLen: null, sheets: true }, o); },
+  profiles(project, d) {
+    const all = project.profiles;
+    if (d.list && d.list.trim()) {
+      const out = [];
+      for (const tok of d.list.split(/[,;]+/).map(s => s.trim()).filter(Boolean)) {
+        const m = tok.match(/^(\d+)\s*-\s*(\d+)$/), n = /^\d+$/.test(tok) ? +tok : null;
+        if (m) for (let i = +m[1]; i <= +m[2]; i++) { if (all[i - 1]) out.push(all[i - 1]); }
+        else if (n !== null) { if (all[n - 1]) out.push(all[n - 1]); }
+        else { const f = all.find(q => q.name === tok); if (f) out.push(f); }
+      }
+      return [...new Set(out)];
+    }
+    if (d.stage && d.stage.trim()) return all.filter(f => !f.off && (f.stage || '').trim() === d.stage.trim());
+    return all.filter(f => !f.off);
+  },
+};
+
+/* Armatura: typy podpowiadane w tabeli ELEMENTY i rodzaj symbolu na profilu (rozpoznawany po nazwie typu). */
+PS.ARM_TYPES = ['Zasuwa', 'Przepustnica', 'Zawór zwrotny', 'Hydrant nadziemny', 'Hydrant podziemny', 'Odpowietrznik', 'Odwodnienie', 'Trójnik', 'Redukcja', 'Kompensator'];
+PS.armKind = type => {
+  const t = (type || '').toLowerCase();
+  if (/hydrant/.test(t)) return 'hydrant';
+  if (/odpowietrz/.test(t)) return 'air';
+  if (/odwodn|spust/.test(t)) return 'drain';
+  if (/zwrotn/.test(t)) return 'check';
+  if (/przepustn/.test(t)) return 'butterfly';
+  if (/trójnik|trojnik/.test(t)) return 'tee';
+  if (/redukc|zwężk|zwezk/.test(t)) return 'reducer';
+  if (/kompens/.test(t)) return 'comp';
+  return 'valve';
+};
+
+// typ uzbrojenia obcego dla sieci innego projektu (skrzyżowania automatyczne)
+PS.NET_UTIL = { 'Kanalizacja': 'Kan.', 'Wodociąg': 'Wod.', 'Sieć gazowa': 'Gaz.', 'Sieć cieplna': 'S.Cieplna' };
+
+/* Rodzaje wierszy tabeli pod profilem. {N} = KANAŁU / RUROCIĄGU wg typu sieci. */
+PS.ROWS = {
+  teren_proj: { pl: 'RZĘDNA TERENU PROJ.', en: 'DESIGNED GROUND LEVEL' },
+  teren_istn: { pl: 'RZĘDNA TERENU ISTN.', en: 'EXISTING GROUND LEVEL' },
+  spadki_tp: { pl: 'SPADKI TERENU PROJ.', en: 'DESIGNED GROUND SLOPE' },
+  spadki_ti: { pl: 'SPADKI TERENU ISTN.', en: 'EXISTING GROUND SLOPE' },
+  dno: { pl: 'RZĘDNA DNA {N}', en: 'INVERT LEVEL' },
+  os: { pl: 'RZĘDNA OSI {N}', en: 'AXIS LEVEL' },
+  strop: { pl: 'RZĘDNA STROPU {N}', en: 'CROWN LEVEL' },
+  dno_wykopu: { pl: 'RZĘDNA DNA WYKOPU', en: 'TRENCH BOTTOM LEVEL' },
+  zagl_strop: { pl: 'ZAGŁĘBIENIE STROPU {N}', en: 'ROOFING COVER' },
+  zagl_os: { pl: 'ZAGŁĘBIENIE OSI {N}', en: 'AXIS COVER' },
+  zagl_dno: { pl: 'ZAGŁĘBIENIE DNA {N}', en: 'INVERT COVER' },
+  zagl_wykop: { pl: 'ZAGŁĘBIENIE DNA WYKOPU', en: 'TRENCH COVER' },
+  spadki: { pl: 'SPADKI, DŁUGOŚCI', en: 'SLOPE, LENGTH' },
+  srednica: { pl: 'ŚREDNICA, MATERIAŁ', en: 'DIAMETER, MATERIAL' },
+  odleglosci: { pl: 'ODLEGŁOŚCI', en: 'DISTANCE' },
+  hektometry: { pl: 'HEKTOMETRY', en: 'HECTOMETER' },
+  wsp_x: { pl: 'WSPÓŁRZĘDNA X', en: 'COORDINATE X' },
+  wsp_y: { pl: 'WSPÓŁRZĘDNA Y', en: 'COORDINATE Y' },
+  katy_poz: { pl: 'KĄTY POZIOME', en: 'HORIZONTAL ANGLES' }, // film 99: kąt załamania trasy w węźle
+  katy_pion: { pl: 'KĄTY PIONOWE', en: 'VERTICAL ANGLES' }, // różnica spadków odcinków w węźle [°]
+};
+PS.DEFAULT_ROWS = ['teren_proj', 'teren_istn', 'dno', 'zagl_strop', 'zagl_dno', 'spadki', 'srednica', 'odleglosci', 'hektometry'];
+
+PS.NET_TYPES = ['Kanalizacja', 'Wodociąg', 'Sieć cieplna', 'Sieć gazowa'];
+PS.NODE_TYPES = ['Studnia', 'Studzienka', 'Wpust', 'Wylot', 'Komora', 'Osadnik', 'Separator', 'Zbiornik', 'Budynek',
+  'Trójnik', 'Łuk', 'Hydrant', 'Zasuwa', 'Armatura', 'Skrzynka', 'Zaślepka', 'Granica', 'Węzeł'];
+// węzły rysowane jako komora (prostokąt studni)
+PS.WELL_TYPES = new Set(['Studnia', 'Studzienka', 'Wpust', 'Komora', 'Osadnik', 'Separator', 'Zbiornik', 'St. pomiarowa']);
+// uzbrojenie obce: typy jak w katalogu PK; kind = pipe (przekrój + kontrola kolizji) | cable | surface (na terenie)
+PS.UTIL_TYPES = {
+  'Kan.': 'pipe', 'Wod.': 'pipe', 'Gaz.': 'pipe', 'S.Cieplna': 'pipe', 'Drenaż': 'pipe', 'Rura': 'pipe', 'Skrzyżowanie': 'pipe',
+  'Kabel': 'cable', 'Kan. tech.': 'cable',
+  'Droga': 'surface', 'Chodnik': 'surface', 'Ogrodzenie': 'surface', 'Rów': 'surface', 'Tory': 'surface', 'Nasyp': 'surface', 'Trawnik': 'surface',
+  'Linia': 'aerial', // linia napowietrzna – rzędna nad terenem
+  'Włączenie': 'inlet',
+};
+// rodzaje uzbrojenia (drzewo Typ › Rodzaj w PK) – podpowiedzi w tabeli UZBROJENIE
+PS.UTIL_SUBTYPES = {
+  'Kan.': ['sanitarna', 'deszczowa', 'ogólnospławna', 'tłoczna'], 'Wod.': ['miejski', 'rozdzielczy', 'magistralny', 'przyłącze'],
+  'Gaz.': ['niskiego ciśnienia', 'średniego ciśnienia', 'wysokiego ciśnienia'], 'S.Cieplna': ['preizolowana', 'kanałowa'],
+  'Kabel': ['NN', 'SN', 'WN', 'telekom.', 'oświetlenie', 'sterowniczy'], 'Kan. tech.': ['telekom.', 'światłowód'],
+  'Linia': ['NN', 'SN', 'WN', 'telekom.'], 'Tory': ['kolejowe', 'tramwajowe'], 'Droga': ['asfaltowa', 'brukowa', 'gruntowa'],
+};
+PS.utilKind = t => PS.UTIL_TYPES[t] || 'pipe';
+// wartości domyślne uzbrojenia (Wartości domyślne uzbrojenia w PK): wymiar [m] i zagłębienie osi [m] wg typu;
+// project.utilDefaults nadpisuje; używane przy imporcie uzbrojenia z warstw mapy DXF
+// wartości jak w bibliotece PK (film 146): Wod. 90 mm / 1,50; Gaz. 1,10; Kabel 0,80 (NN 0,60, SN 0,70); Linia 3,00 nad terenem
+PS.UTIL_DEFAULTS = {
+  'Kan.': { dn: 0.3, depth: 1.8 }, 'Wod.': { dn: 0.09, depth: 1.5 }, 'Gaz.': { dn: 0.063, depth: 1.1 }, 'S.Cieplna': { dn: 0.2, depth: 1.0 },
+  'Drenaż': { dn: 0.1, depth: 1.0 }, 'Rura': { dn: 0.1, depth: 1.0 }, 'Kabel': { dn: 0.05, depth: 0.8 }, 'Kan. tech.': { dn: 0.11, depth: 0.8 },
+  'Kabel|NN': { depth: 0.6 }, 'Kabel|SN': { depth: 0.7 }, 'Kabel|WN': { depth: 1.0 }, 'Linia': { dn: null, depth: 3.0 }, 'Linia|SN': { depth: 6.0 }, 'Linia|WN': { depth: 10.0 },
+  'Droga': { dn: 5.0, depth: null }, 'Chodnik': { dn: 2.0, depth: null }, 'Ogrodzenie': { dn: null, depth: null }, 'Rów': { dn: null, depth: 0.2 },
+  'Tory': { dn: null, depth: null }, 'Nasyp': { dn: null, depth: null }, 'Trawnik': { dn: null, depth: null },
+};
+// domyślne dla typu i rodzaju (rodzaj dziedziczy po typie); project.utilDefaults nadpisuje
+PS.utilDefault = (project, type, sub) => {
+  const U = (project && project.utilDefaults) || {}, k2 = sub ? `${type}|${sub}` : null;
+  return Object.assign({ dn: null, depth: null }, PS.UTIL_DEFAULTS[type] || {}, U[type] || {}, (k2 && PS.UTIL_DEFAULTS[k2]) || {}, (k2 && U[k2]) || {});
+};
+/* Pole rzędnej uzbrojenia ze znakami PK: „~” wartość przybliżona, „#” bez rzędnej w opisie, L/l/P/p (z mnożnikiem, np. 216.9P2)
+   odnośnik z rzędną po lewej / prawej; liczba ujemna = zagłębienie pod terenem. Zwraca { s: reszta do U.level, flags }. */
+PS.parseUtilLevel = raw => {
+  let s = String(raw ?? '').trim(); const fl = {};
+  if (s[0] === '~') { fl.approx = true; s = s.slice(1); }
+  if (s[0] === '#') { fl.hideElev = true; s = s.slice(1); }
+  const m = s.match(/^([LlPp])(\d+(?:[.,]\d+)?)?(.*)$/) || s.match(/^(.*?)([LlPp])(\d+(?:[.,]\d+)?)?$/);
+  if (m) {
+    const pre = /^[LlPp]/.test(s), side = pre ? m[1] : m[2], mult = pre ? m[2] : m[3];
+    s = (pre ? m[3] : m[1]).trim();
+    fl.tag = { side: side.toUpperCase(), below: side === side.toLowerCase(), mult: mult ? PS.util.num(mult) : 1 };
+  }
+  return { s, fl };
+};
+/* Wymiar uzbrojenia: „0.05x12” – wiązka 12 przewodów, „0.6x0.4” – przekrój prostokątny szer. × wys. [m]. */
+PS.parseUtilDn = raw => {
+  const s = String(raw ?? '').trim().replace(/^z/i, '');
+  const mm = v => (v !== null && v >= 20 ? v / 1000 : v); // jednostki jak w PK: 200 = 0,2 m (wartości ≥ 20 to milimetry)
+  const m = s.match(/^(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)$/i);
+  if (!m) return { dn: mm(PS.util.num(s)), mult: null, dnH: null, bad: s !== '' && PS.util.num(s) === null };
+  const a = mm(PS.util.num(m[1])), b = PS.util.num(m[2]);
+  return Number.isInteger(b) && b >= 2 && b <= 48 && !/[.,]/.test(m[2]) ? { dn: a, mult: b, dnH: null } : { dn: a, mult: null, dnH: mm(b) };
+};
+
+PS.model = {
+  newProject(o = {}) {
+    return Object.assign({
+      id: PS.util.uid(), name: 'Nowy projekt', netType: 'Kanalizacja', netKind: 'Sanitarna', flow: 'grawitacyjna', ref: 'rz. dna',
+      scaleH: 500, scaleV: 100, ppFixed: null, zMin: 1.2, zMax: 3.0, spMin: 0, spMax: 0, bedding: 0.1, cover: 0.3,
+      defaultDn: 0.2, clrPipe: 0.2, clrCable: 0.25,
+      // konstrukcja (Konfiguracja projektu PK): kierunek 'end' (od końca) | 'start' (od początku), łączenie odcinków dno | os | strop,
+      // interpretacja rzędnych 'at' (tylko z @) | 'auto10', teren proj. dowiązany do istniejącego
+      construct: 'end', joinBy: 'dno', levelMode: 'at', tpLink: false,
+      // wykop (Roboty ziemne): szerokość dna = ⌀ + widen [m], nachylenie skarp lewej/prawej [m/m] (0 = ściany pionowe)
+      trench: { widen: 0.6, tanL: 0, tanR: 0 },
+      rows: PS.DEFAULT_ROWS.map(k => ({ kind: k, pl: null, en: null, h: 1.0 })), source: '', profiles: [],
+    }, o);
+  },
+  // uzupełnia pola dodane w nowszych wersjach (projekty zapisane wcześniej)
+  migrate(p) {
+    const def = PS.model.newProject();
+    for (const k of Object.keys(def)) if (p[k] === undefined) p[k] = def[k];
+    for (const f of p.profiles) for (const k of ['crossings', 'elements', 'boreholes']) if (!Array.isArray(f[k])) f[k] = [];
+    return p;
+  },
+  newProfile(o = {}) { return Object.assign({ id: PS.util.uid(), name: 'Profil', attach: '', parent: '', points: [], crossings: [], elements: [], boreholes: [] }, o); },
+  // elementy rysunkowe profilu (tabela 4 PK „arm”/„elem”): kind = arm (armatura na rurze) | casing (rura ochronna) – tabela ELEMENTY;
+  // text | leader (odnośnik) | dim (wymiar) | vector (wektor) – tabela OPISY, jak Dane › Opisy w PK;
+  // elev = rzędna punktu [m n.p.m.]; dx, dy = przesunięcie napisu [cm na rysunku]; length = długość rury ochronnej [m];
+  // dist2, elev2 = drugi punkt wymiaru (puste: ten sam Mb – wymiar pionowy; ta sama rzędna – wymiar poziomy)
+  newElement(o = {}) {
+    return Object.assign({ id: PS.util.uid(), kind: 'text', type: '', dist: 0, elev: null, dx: 0, dy: 0, vertical: false, length: null, text1: '', text2: '', dist2: null, elev2: null }, o);
+  },
+  // rodzaje rur ochronnych (film 136): typ dopisywany do opisu automatycznego
+  CASING_TYPES: ['Rura ochronna', 'Rura przewiertowa', 'Rura przeciskowa', 'AROT'],
+  // opis automatyczny rury ochronnej: „RURA OCHRONNA ⌀400, L=3.0m” (Dn w mm, długość L); Opis 1 zastępuje typ, „&tekst” dopisuje
+  casingLabel(e, pipeDn, ozn = e.ozn) {
+    const U = PS.util, dn = PS.model.casingDn(e, pipeDn);
+    const base = e.type && PS.model.CASING_TYPES.includes(e.type) ? e.type : 'Rura ochronna';
+    const t1 = String(e.text1 || '').trim();
+    const head = !t1 ? base : t1[0] === '&' ? `${base} ${t1.slice(1).trim()}` : t1;
+    return [ozn && ozn !== 'auto' ? ozn : '', `${head} ⌀${Math.round(dn * 1000)}`].filter(Boolean).join(' ') + (e.length ? `, L=${U.fix(e.length, 1)}m` : '');
+  },
+  // średnica rury ochronnej: wpisana Dn albo Dn rury przewodowej + 0,1 m
+  casingDn(e, pipeDn) { return has(e.cdn) && e.cdn > 0 ? (e.cdn > 5 ? e.cdn / 1000 : e.cdn) : (pipeDn || 0.2) + 0.1; },
+  // numeracja „auto” w polu Ozn: RO1, RO2… (rury ochronne), Z1… (armatura) – kolejno wg Mb na profilu
+  autoOzn(profile) {
+    const cnt = {};
+    const pre = e => e.kind === 'casing' ? 'RO' : ({ hydrant: 'H', air: 'O', drain: 'S' })[PS.armKind(e.type)] || 'Z';
+    const out = new Map();
+    for (const e of (profile.elements || []).filter(q => q.ozn === 'auto').sort((a, b) => a.dist - b.dist)) {
+      const p = pre(e); cnt[p] = (cnt[p] || 0) + 1; out.set(e, p + cnt[p]);
+    }
+    return out;
+  },
+  ELEMENT_KINDS: { arm: 'Armatura', casing: 'Rura ochronna', text: 'Tekst', leader: 'Odnośnik', dim: 'Wymiar', vector: 'Wektor' },
+  ELEM_TAB: { elem: ['arm', 'casing'], opisy: ['text', 'leader', 'dim', 'vector'] },
+  // odwiert geologiczny: elev = rzędna wierzchu (puste = teren), water = zwierciadło wody gruntowej [m p.p.t.];
+  // layers = warstwy od góry: { to: głębokość spągu [m p.p.t.], soil: opis gruntu }
+  newBorehole(o = {}) { return Object.assign({ id: PS.util.uid(), name: '', dist: 0, elev: null, water: null, layers: [] }, o); },
+  // zapis warstw w jednym polu tabeli: „0.3 gleba; 1.8 piasek drobny; 4.0 glina pylasta”
+  formatLayers(ls) { return (ls || []).map(l => `${PS.util.fix(l.to, 2)} ${l.soil}`.trim()).join('; '); },
+  parseLayers(s) {
+    const out = [];
+    for (const part of String(s || '').split(/[;\n]+/)) {
+      const m = part.trim().match(/^(-?\d+(?:[.,]\d+)?)\s*(?:m\b)?\s*(.*)$/);
+      if (!part.trim()) continue;
+      if (!m) return null;
+      out.push({ to: Math.abs(PS.util.num(m[1])), soil: m[2].trim() });
+    }
+    out.sort((a, b) => a.to - b.to);
+    return out;
+  },
+  // skrzyżowanie z uzbrojeniem: elev = rzędna spodu przewodu; depth = zagłębienie osi pod terenem, gdy brak rzędnej
+  newCrossing(o = {}) {
+    // ref = sieć z tej samej bazy rozpoznana po X/Y (tylko informacyjnie, nie trafia na rysunek)
+    return Object.assign({ id: PS.util.uid(), dist: 0, status: 'Istn.', type: 'Kan.', sub: '', dn: null, elev: null, depth: null, desc: '', ref: '', x: null, y: null }, o);
+  },
+  // opis pionowy skrzyżowania; k = wynik obliczeń (compute → crosses)
+  crossingLabel(c, k) {
+    const U = PS.util;
+    // skrzyżowanie z siecią rozpoznaną po X/Y: „Proj. kan. deszczowa ⌀0.2 …” zamiast słowa „Skrzyżowanie”
+    // opis składany jak w PK: „Istn. WOD. miejski W150” – oznaczenie (Ozn) zastępuje ⌀, wiązka „x12”, przekrój „0.6x0.4”
+    let s = [c.status, c.type === 'Skrzyżowanie' && c.sub ? '' : c.type, c.sub, c.ozn].filter(Boolean).join(' ');
+    if (c.dn && !c.ozn && (!k || k.kind !== 'surface')) s += ` ⌀${U.m(c.dn)}${c.dnH ? `x${U.m(c.dnH)}` : ''}${c.mult ? ` x${c.mult}` : ''}`;
+    else if (c.dn && k && k.kind === 'surface') s += `, szer.=${U.fix(c.dn, 1)}m`; // obiekty bez średnicy: drogi, tory, rowy (film 129)
+    if (c.desc) {
+      const dm = PS.render && PS.render.descMarks ? PS.render.descMarks(c.desc) : { text: c.desc, mode: 'plain' };
+      if (dm.mode === 'none') s = ''; // „-” – bez opisu tekstowego, tylko rzędna
+      else if (dm.text) s += ` ${dm.text}`;
+    }
+    if (k && k.kind !== 'surface' && k.elev !== null && !c.hideElev) s += `, ${k.kind === 'inlet' ? 'Rz.d.' : 'Rz.'}${c.approx ? '~' : ''}=${U.fix(k.elev, 2)}`;
+    if (k && k.clash) s += `  KOLIZJA Δh=${U.fix(k.clear, 2)}`;
+    if (c.desc2) s += `, ${c.desc2}`; // Opis 2 (film 130), np. „DO LIKWIDACJI”
+    return s.replace(/^,\s*/, '');
+  },
+  newPoint(o = {}) {
+    return Object.assign({
+      id: PS.util.uid(), name: '', kind: 'node', type: 'Studnia', dist: 0, x: null, y: null, ti: null, tp: null,
+      inv: null, invOut: null, dn: 1.2, desc: '', pipeDn: null, pipeMat: '',
+    }, o);
+  },
+
+  /* Parametry wykopu odcinka (PK: ODCINKI › Wykopy, film 13): wpisane dla odcinka (w węźle końcowym b.trench) albo globalne z projektu. */
+  trenchOf(project, b) {
+    const g = Object.assign({ widen: 0.6, tanL: 0, tanR: 0 }, project.trench || {});
+    const o = (b && b.trench) || {};
+    const pick = (k, def) => (has(o[k]) ? o[k] : def);
+    return { bed: pick('bed', project.bedding || 0), cover: pick('cover', project.cover || 0), widen: pick('widen', g.widen), tanL: pick('tanL', g.tanL), tanR: pick('tanR', g.tanR), drain: pick('drain', 0) };
+  },
+  // przedrostek nazw węzłów wg typu sieci (PK: S – kanalizacja, W – wodociąg, PZ – gaz, C – c.o.)
+  // kanalizacja deszczowa D, ogólnospławna K, sanitarna S – różne przedrostki, żeby węzły sieci w temacie się nie myliły
+  // wierzch studni: Rz. g. < 20 m – wyniesienie ponad teren (RTp, a bez niego RTi), inaczej rzędna bezwzględna; brak – teren
+  wellTop(n, c) {
+    const t = c && has(c.terrain) ? c.terrain : n.tp ?? n.ti ?? null;
+    if (has(n.rzG)) return Math.abs(n.rzG) < 20 ? (has(t) ? t + n.rzG : null) : n.rzG;
+    return has(t) ? t : null;
+  },
+  // bazowy typ nowego węzła: kanalizacja (grawitacyjna) – Studnia, także pierwszy węzeł; sieci ciśnieniowe – pusty (do uzupełnienia)
+  baseNodeType(project) {
+    return project && project.netType === 'Kanalizacja' && project.flow !== 'ciśnieniowa' ? 'Studnia' : '';
+  },
+  /* Numeracja obiektów: każdy rodzaj węzła ma własny przedrostek i kolejne numery od 1 w całym projekcie
+     (kanalizacja sanitarna S1, S2…, deszczowa D1, D2…, wpusty Wd1, Wd2…). Numer usuniętego obiektu nie wraca
+     i nic nie jest przenumerowywane – licznik projektu (project.counters) pamięta najwyższy użyty numer. */
+  NODE_PREFIX: { Wpust: 'Wd', Studzienka: 'Sk', Wylot: 'Wy', Komora: 'Km', Osadnik: 'Os', Separator: 'Sep', Zbiornik: 'Zb', Budynek: 'B',
+    'Trójnik': 'Tr', 'Łuk': 'Ł', Hydrant: 'H', Zasuwa: 'Z', Armatura: 'A', Skrzynka: 'Sz', 'Zaślepka': 'Zś', Granica: 'G', 'Węzeł': 'N', 'St. pomiarowa': 'Sp' },
+  prefixFor(project, type) {
+    return (type && PS.model.NODE_PREFIX[type]) || PS.model.nodePrefix(project);
+  },
+  nextName(project, prefix, reserved) {
+    const c = project.counters || (project.counters = {});
+    const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), re = new RegExp(`^${esc}(\\d+)$`);
+    let max = c[prefix] || 0;
+    for (const f of project.profiles) for (const q of f.points) { const m = re.exec(q.name || ''); if (m) max = Math.max(max, +m[1]); }
+    for (const n of reserved || []) { const m = re.exec(n || ''); if (m) max = Math.max(max, +m[1]); }
+    c[prefix] = max + 1;
+    return prefix + (max + 1);
+  },
+  nodePrefix(project) {
+    if (project && project.netType === 'Kanalizacja') return ({ Deszczowa: 'D', 'Ogólnospławna': 'K' })[project.netKind] || 'S';
+    return ({ 'Wodociąg': 'W', 'Sieć gazowa': 'PZ', 'Sieć cieplna': 'C' })[project && project.netType] || 'S';
+  },
+  netWord(project) { return project.netType === 'Kanalizacja' ? 'KANAŁU' : 'RUROCIĄGU'; },
+  rowLabel(project, row) {
+    const def = PS.ROWS[row.kind] || { pl: row.kind, en: '' };
+    const w = PS.model.netWord(project);
+    return { pl: (row.pl || def.pl).replace('{N}', w), en: row.en ?? def.en };
+  },
+
+  /* Oblicza wszystko, czego potrzebuje rysunek, tabela i diagnostyka. */
+  compute(project, profile) {
+    const U = PS.util;
+    project = PS.model.eff(project, profile);
+    PS.model.linkTerrain(project, profile);
+    PS.model.applyDepthFix(profile); // stałe zagłębienia (−1,0 w ODCINKI) nadążają za terenem
+    const pts = profile.points.slice().sort((a, b) => (a.dist ?? 0) - (b.dist ?? 0));
+    const nodes = pts.filter(p => p.kind === 'node');
+    const terrainOf = p => (p.tp ?? p.ti);
+    const segs = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const a = nodes[i], b = nodes[i + 1];
+      const L = (b.dist ?? 0) - (a.dist ?? 0);
+      const i0 = a.invOut ?? a.inv, i1 = b.inv;
+      const slope = (L > 0 && i0 !== null && i1 !== null) ? (i1 - i0) / L * 100 : null; // % (+ = w górę wzdłuż kilometrażu)
+      const prev = segs[segs.length - 1];
+      segs.push({ a, b, L, i0, i1, slope, dn: b.pipeDn ?? prev?.dn ?? project.defaultDn, mat: b.pipeMat || (b.pipeDn == null ? prev?.mat : '') || '' });
+    }
+    const nodeCalc = new Map();
+    for (const n of nodes) {
+      const t = terrainOf(n);
+      const segIn = segs.find(s => s.b === n), segOut = segs.find(s => s.a === n);
+      const dnIn = segIn ? segIn.dn : (segOut ? segOut.dn : project.defaultDn);
+      const dnOut = segOut ? segOut.dn : dnIn;
+      const invIn = n.inv, invOut = n.invOut ?? n.inv;
+      const c = {
+        terrain: t, invIn, invOut, drop: invIn !== null && invOut !== null && Math.abs(invOut - invIn) > 0.005,
+        zDno: t !== null && invIn !== null ? t - invIn : null,
+        zDnoOut: t !== null && invOut !== null ? t - invOut : null,
+        zStrop: t !== null && invIn !== null ? t - invIn - dnIn : null,
+        zStropOut: t !== null && invOut !== null ? t - invOut - dnOut : null,
+        dnIn, dnOut,
+      };
+      nodeCalc.set(n, c);
+    }
+    // skrzyżowania z uzbrojeniem: rzędna przewodu, odległość pionowa od kanału, kolizja
+    const interp = (d, xs) => {
+      if (!xs.length) return null;
+      if (d <= xs[0][0]) return xs[0][1];
+      for (let i = 1; i < xs.length; i++) if (d <= xs[i][0]) {
+        const [d0, v0] = xs[i - 1], [d1, v1] = xs[i];
+        return d1 > d0 ? v0 + (v1 - v0) * (d - d0) / (d1 - d0) : v1;
+      }
+      return xs[xs.length - 1][1];
+    };
+    const terrXs = pts.filter(p => terrainOf(p) !== null && terrainOf(p) !== undefined).map(p => [p.dist ?? 0, terrainOf(p)]);
+    // włączenia odgałęzień z drzewa sieci (profile tego projektu zaczynające się w węźle tego profilu), jeśli nie ma ich w tabeli
+    const stored = profile.crossings || [];
+    const inlets = [];
+    for (const br of PS.model.branchesOf(project, profile)) {
+      // węzeł z włączeniami wpisanymi w tabeli (np. z bazy PK) – tabela jest rozstrzygająca
+      if (stored.some(c => PS.utilKind(c.type) === 'inlet' && Math.abs(c.dist - br.node.dist) < 0.1)) continue;
+      inlets.push(PS.model.newCrossing({ id: 'auto-' + br.f.id, dist: br.node.dist, status: '', type: 'Włączenie', sub: br.f.name, dn: br.dn, elev: br.inv, virtual: true }));
+    }
+    // opis po stronie odgałęzienia (film 123): „Proj. Włączenie do kanału S1 ⌀0.2, Rz.d.=…” w pierwszym węźle; wyłączany profile.noHostLabel
+    const host = PS.model.hostOf(project, profile), n0 = nodes[0];
+    if (host && n0 && !profile.noHostLabel && !stored.some(c => PS.utilKind(c.type) === 'inlet' && Math.abs(c.dist - n0.dist) < 0.1)) {
+      const c0 = nodeCalc.get(n0), hc = host.f && PS.model.nodesOf(host.f);
+      const hostDn = hc ? (hc[host.index] && hc[host.index].pipeDn) || (hc[host.index + 1] && hc[host.index + 1].pipeDn) : null;
+      inlets.push(PS.model.newCrossing({ id: 'host-' + profile.id, dist: n0.dist, status: 'Proj.', type: 'Włączenie', sub: `do kanału ${PS.render ? PS.render.pzMarks(host.node.name).name : host.node.name}`,
+        dn: hostDn || null, elev: c0 ? (c0.invOut ?? c0.invIn) : null, virtual: true, host: true,
+        // kolektor, do którego włącza się odgałęzienie: dno w węźle włączenia (do przekroju na rysunku)
+        hostInv: [host.node.inv, host.node.invOut].filter(v => v !== null && v !== undefined).reduce((a, b) => Math.min(a, b), Infinity) }));
+      const last = inlets[inlets.length - 1]; if (!isFinite(last.hostInv)) last.hostInv = null;
+    }
+    const crosses = stored.concat(inlets).slice().sort((a, b) => a.dist - b.dist).map(c => {
+      const kind = PS.utilKind(c.type);
+      const terrain = interp(c.dist, terrXs);
+      // rzędna podana wprost = spód przewodu; zagłębienie (jak w PK) = do osi przewodu
+      // wysokość przekroju: prostokątny (dnH) albo okrągły (dn); linia napowietrzna – rzędna nad terenem (depth = wysokość)
+      const hgt = c.dnH ?? c.dn ?? 0;
+      const elev = c.elev ?? (kind === 'aerial' ? (has(c.depth) && terrain !== null ? terrain + Math.abs(c.depth) : null)
+        : c.depth !== null && c.depth !== undefined && terrain !== null ? terrain - Math.abs(c.depth) - hgt / 2 : (kind === 'surface' ? terrain : null));
+      const s = segs.find(q => c.dist >= q.a.dist - 1e-6 && c.dist <= q.b.dist + 1e-6 && q.i0 !== null && q.i1 !== null);
+      let inv = null, crown = null, clear = null, clash = false;
+      if (s) {
+        inv = s.L > 0 ? s.i0 + (s.i1 - s.i0) * (c.dist - s.a.dist) / s.L : s.i0;
+        crown = inv + (s.dn || 0);
+        if ((kind === 'pipe' || kind === 'cable') && elev !== null) {
+          const top = elev + hgt;
+          clear = elev >= crown ? elev - crown : (top <= inv ? inv - top : -Math.min(top - inv, crown - elev));
+          const need = kind === 'cable' ? project.clrCable : project.clrPipe;
+          clash = need > 0 && Math.round(clear * 100) / 100 < need - 1e-9; // porównanie po zaokrągleniu do cm, jak w opisie
+        }
+      }
+      return { c, kind, terrain, elev, inv, crown, clear, clash };
+    });
+    const crossDiag = [];
+    for (const k of crosses) {
+      if (k.clash) crossDiag.push({ lvl: 'warn', at: '', crossing: k.c.id, msg: `Kolizja w Mb ${U.fix(k.c.dist, 2)}: ${[k.c.status, k.c.type, k.c.sub].filter(Boolean).join(' ')} – odległość ${U.fix(k.clear, 2)} m < ${U.fix(k.kind === 'cable' ? project.clrCable : project.clrPipe, 2)} m` });
+      else if ((k.kind === 'pipe' || k.kind === 'cable') && k.elev === null) crossDiag.push({ lvl: 'warn', at: '', crossing: k.c.id, msg: `Skrzyżowanie w Mb ${U.fix(k.c.dist, 2)} (${k.c.type}): brak rzędnej` });
+      if (k.kind === 'inlet' && k.elev !== null) {
+        const n = nodes.find(q => Math.abs(q.dist - k.c.dist) < 0.1), c = n && nodeCalc.get(n);
+        const bottom = c ? Math.min(...[c.invIn, c.invOut].filter(has)) : Infinity;
+        if (isFinite(bottom) && k.elev < bottom - 0.005) crossDiag.push({ lvl: 'warn', at: n.name, crossing: k.c.id, msg: `${n.name}: włączenie ${k.c.sub || ''} (Rz.d. ${U.fix(k.elev, 2)}) poniżej dna kanału ${U.fix(bottom, 2)}` });
+      }
+    }
+
+    // elementy rysunkowe: rzędne kanału i terenu w miejscu elementu
+    const pipeAt = d => {
+      const s = segs.find(q => d >= q.a.dist - 1e-6 && d <= q.b.dist + 1e-6 && q.i0 !== null && q.i1 !== null);
+      if (!s) return { inv: null, dn: null };
+      return { inv: s.L > 0 ? s.i0 + (s.i1 - s.i0) * (d - s.a.dist) / s.L : s.i0, dn: s.dn || 0 };
+    };
+    const elems = (profile.elements || []).slice().sort((a, b) => a.dist - b.dist).map(e => ({ e, ...pipeAt(e.dist), terrain: interp(e.dist, terrXs), terrain2: has(e.dist2) ? interp(e.dist2, terrXs) : null }));
+    // odwierty: rzędne wierzchu, spągów warstw i wody gruntowej
+    const bores = (profile.boreholes || []).slice().sort((a, b) => a.dist - b.dist).map(b => {
+      // rzędna wierzchu: bezwzględna albo (|Rz.| < 20 m) przyrost od terenu w miejscu odwiertu (film 131)
+      const tr = interp(b.dist, terrXs);
+      const top = has(b.elev) ? (Math.abs(b.elev) < 20 && tr !== null ? tr + b.elev : b.elev) : tr;
+      // zwierciadło nawiercone (water) i ustalone (water2) [m p.p.t.]
+      return { b, top, layers: top === null ? [] : (b.layers || []).map(l => ({ ...l, bottom: top - l.to })), water: top !== null && has(b.water) ? top - b.water : null,
+        water2: top !== null && has(b.water2) ? top - b.water2 : null };
+    });
+
+    const lo = PS.model.minLevel(pts);
+    const pp = project.ppFixed ?? PS.model.autoPP(project, pts, nodeCalc, crosses);
+    let hi = -Infinity;
+    for (const p of pts) for (const v of [p.ti, p.tp, p.inv]) if (v !== null && v !== undefined && v > hi) hi = v;
+    const length = pts.length ? (pts[pts.length - 1].dist ?? 0) : 0;
+
+    // diagnostyka wg Ustawień projektu
+    const diag = [];
+    for (const s of segs) {
+      if (s.slope === null) continue;
+      const a = Math.abs(s.slope);
+      if (project.spMin > 0 && a < project.spMin - 1e-9) diag.push({ lvl: 'warn', at: s.b.name, msg: `Spadek ${U.pct(s.slope, 2)} < Sp. min ${U.pct(project.spMin)} (${s.a.name}–${s.b.name})` });
+      if (project.spMax > 0 && a > project.spMax + 1e-9) diag.push({ lvl: 'warn', at: s.b.name, msg: `Spadek ${U.pct(s.slope, 2)} > Sp. max ${U.pct(project.spMax)} (${s.a.name}–${s.b.name})` });
+      if (project.flow === 'grawitacyjna' && s.L > 0 && Math.abs(s.slope) < 1e-9) diag.push({ lvl: 'warn', at: s.b.name, msg: `Spadek zerowy na odcinku ${s.a.name}–${s.b.name}` });
+    }
+    for (const [n, c] of nodeCalc) {
+      if (n.type === 'Budynek' || n.type === 'Wylot') continue;
+      if (c.zStrop !== null && project.zMin > 0 && Math.min(c.zStrop, c.zStropOut ?? c.zStrop) < project.zMin - 1e-9)
+        diag.push({ lvl: 'warn', at: n.name, msg: `${n.name}: przykrycie ${U.fix(Math.min(c.zStrop, c.zStropOut ?? c.zStrop), 2)} m < Z. min ${U.fix(project.zMin, 2)}` });
+      if (c.zDno !== null && project.zMax > 0 && Math.max(c.zDno, c.zDnoOut ?? c.zDno) > project.zMax + 1e-9)
+        diag.push({ lvl: 'warn', at: n.name, msg: `${n.name}: zagłębienie dna ${U.fix(Math.max(c.zDno, c.zDnoOut ?? c.zDno), 2)} m > Z. max ${U.fix(project.zMax, 2)}` });
+      if (c.invIn === null) diag.push({ lvl: 'warn', at: n.name, msg: `${n.name}: brak rzędnej dna` });
+      if (c.terrain === null) diag.push({ lvl: 'warn', at: n.name, msg: `${n.name}: brak rzędnej terenu` });
+    }
+    diag.push(...crossDiag);
+    for (const k of bores) {
+      if (k.top === null) diag.push({ lvl: 'warn', at: '', msg: `Odwiert ${k.b.name || ''} w Mb ${U.fix(k.b.dist, 2)}: brak rzędnej terenu` });
+      // woda gruntowa nad dnem kanału – informacja dla wykopu (odwodnienie)
+      const s = segs.find(q => k.b.dist >= q.a.dist - 1e-6 && k.b.dist <= q.b.dist + 1e-6 && q.i0 !== null && q.i1 !== null);
+      if (s && k.water !== null) {
+        const inv = s.L > 0 ? s.i0 + (s.i1 - s.i0) * (k.b.dist - s.a.dist) / s.L : s.i0;
+        if (k.water > inv - project.bedding) diag.push({ lvl: 'warn', at: '', msg: `Odwiert ${k.b.name || ''} (Mb ${U.fix(k.b.dist, 2)}): woda gruntowa ${U.fix(k.water, 2)} powyżej dna wykopu ${U.fix(inv - project.bedding, 2)} – odwodnienie wykopu` });
+      }
+    }
+    const angles = PS.model.nodeAngles(project, profile, nodes);
+    return { pts, nodes, segs, nodeCalc, crosses, elems, bores, angles, pp, lo, hi, length, diag };
+  },
+
+  /* Kąty w planie (Opcje › Schemat w PK): załamanie = odchylenie od przedłużenia poprzedniego odcinka [°], + w lewo
+     (patrząc wzdłuż kilometrażu); kierunek odgałęzień względem kierunku trasy w węźle. */
+  nodeAngles(project, profile, nodes) {
+    const out = new Map(), xy = n => has(n.x) && has(n.y);
+    const deg = r => { let d = r * 180 / Math.PI; while (d > 180) d -= 360; while (d <= -180) d += 360; return d; };
+    const brs = PS.model.branchesOf(project, profile);
+    nodes.forEach((n, i) => {
+      if (!xy(n)) return;
+      const prev = i > 0 && xy(nodes[i - 1]) ? nodes[i - 1] : null, next = i < nodes.length - 1 && xy(nodes[i + 1]) ? nodes[i + 1] : null;
+      const a1 = prev ? Math.atan2(n.y - prev.y, n.x - prev.x) : null, a2 = next ? Math.atan2(next.y - n.y, next.x - n.x) : null;
+      const dir = a2 ?? a1;
+      const branches = [];
+      for (const b of brs) {
+        if (b.node !== n) continue;
+        const g = PS.model.nodesOf(b.f);
+        if (g.length > 1 && xy(g[0]) && xy(g[1]) && dir !== null) branches.push({ name: b.f.name, rel: deg(Math.atan2(g[1].y - g[0].y, g[1].x - g[0].x) - dir) });
+      }
+      out.set(n, { defl: a1 !== null && a2 !== null ? deg(a2 - a1) : null, dir, branches });
+    });
+    return out;
+  },
+  // współrzędne X/Y punktu trasy o kilometrażu d (interpolacja między węzłami z X/Y); null gdy brak
+  xyOf(profile, d) {
+    const ns = PS.model.nodesOf(profile).filter(n => has(n.x) && has(n.y) && has(n.dist));
+    if (!ns.length || !has(d)) return null;
+    for (let i = 1; i < ns.length; i++) {
+      const a = ns[i - 1], b = ns[i];
+      if (d <= b.dist + 1e-9 || i === ns.length - 1) {
+        const t = b.dist === a.dist ? 0 : (d - a.dist) / (b.dist - a.dist);
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      }
+    }
+    return { x: ns[0].x, y: ns[0].y };
+  },
+  // rzut punktu planu na trasę profilu: { dist, x, y, off (odległość od osi, + po lewej), seg } albo null
+  projectOn(profile, x, y) {
+    const ns = PS.model.nodesOf(profile).filter(n => has(n.x) && has(n.y));
+    let best = null;
+    for (let i = 1; i < ns.length; i++) {
+      const a = ns[i - 1], b = ns[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      if (!l2) continue;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2));
+      const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(x - px, y - py);
+      if (!best || d < Math.abs(best.off)) {
+        const side = Math.sign(dx * (y - a.y) - dy * (x - a.x)) || 1;
+        best = { dist: Math.round((a.dist + t * (b.dist - a.dist)) * 1000) / 1000, x: px, y: py, off: side * d, seg: i };
+      }
+    }
+    return best;
+  },
+  // przecięcie odcinka p–q (np. przewodu wskazanego na planie) z trasą: { dist, x, y, ang (kąt skrzyżowania 0–90°) } albo null
+  crossProfile(profile, p, q) {
+    const ns = PS.model.nodesOf(profile).filter(n => has(n.x) && has(n.y));
+    let best = null;
+    for (let i = 1; i < ns.length; i++) {
+      const a = ns[i - 1], b = ns[i];
+      const r = [b.x - a.x, b.y - a.y], s = [q[0] - p[0], q[1] - p[1]], den = r[0] * s[1] - r[1] * s[0];
+      if (Math.abs(den) < 1e-12) continue;
+      const t = ((p[0] - a.x) * s[1] - (p[1] - a.y) * s[0]) / den, u = ((p[0] - a.x) * r[1] - (p[1] - a.y) * r[0]) / den;
+      if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+      const ang = Math.abs(Math.atan2(r[0] * s[1] - r[1] * s[0], r[0] * s[0] + r[1] * s[1]) * 180 / Math.PI);
+      const c = { dist: Math.round((a.dist + t * (b.dist - a.dist)) * 1000) / 1000, x: a.x + t * r[0], y: a.y + t * r[1], ang: Math.round((ang > 90 ? 180 - ang : ang) * 10) / 10 };
+      if (!best || c.dist < best.dist) best = c;
+    }
+    return best;
+  },
+  /* Dostawienie punktów trasy na planie (PK: Punkt na początku / na końcu trasy): pts – nowe wierzchołki [x, y] w kolejności rysowania
+     od istniejącego końca. Na początku trasy kilometraż całego profilu przesuwa się o długość dostawionej części. */
+  extendProfile(project, f, where, pts, opt = {}) {
+    const ns = PS.model.nodesOf(f);
+    if (!ns.length || !pts.length) return 0;
+    const end = where === 'start' ? ns[0] : ns[ns.length - 1];
+    const chain = [[end.x, end.y], ...pts];
+    const tmp = PS.model.buildRoute(project, where === 'start' ? chain.slice().reverse() : chain, { ...opt, noNames: true });
+    const tn = PS.model.nodesOf(tmp), L = tmp.points.reduce((m, q) => Math.max(m, q.dist), 0);
+    let add;
+    if (where === 'start') {
+      PS.model.shiftChainage(f, L - (ns[0].dist || 0));
+      add = tmp.points.filter(q => q !== tn[tn.length - 1]);
+      if (ns[0].type === 'Wylot') { ns[0].type = 'Studnia'; ns[0].dn = ns[0].dn || 1.2; }
+    } else {
+      const base = end.dist || 0;
+      add = tmp.points.filter(q => q !== tn[0]).map(q => Object.assign(q, { dist: Math.round((q.dist + base) * 1000) / 1000 }));
+      const nt = PS.model.baseNodeType(project);
+      for (const q of add.filter(q => q.kind === 'node')) { q.type = nt; q.dn = nt === 'Studnia' ? q.dn || 1.2 : null; q.pipeDn = q.pipeDn ?? null; }
+    }
+    // kolejne numery projektu w kolejności rysowania (od istniejącego końca trasy)
+    const newNodes = add.filter(q => q.kind === 'node');
+    for (const q of where === 'start' ? newNodes.slice().reverse() : newNodes) q.name = PS.model.nextName(project, PS.model.prefixFor(project, q.type));
+    // rzędne dna dostawionych węzłów zostają do konstrukcji spadku (Alt+K); w nowych węzłach – szacunek z terenu
+    f.points.push(...add);
+    PS.model.normalize(f);
+    return add.filter(q => q.kind === 'node').length;
+  },
+  /* Przyłącze / odgałęzienie narysowane na planie od węzła istniejącego profilu (PK: Nowe przyłącze):
+     pierwszy węzeł nowego profilu = węzeł włączenia (ta sama nazwa i X/Y), dalej wskazane wierzchołki. */
+  branchFrom(project, node, pts, opt = {}) {
+    // węzły przyłącza – kolejne numery projektu wg rodzaju (S5, S6… / D3, D4…), jak cała sieć
+    const f = PS.model.buildRoute(project, [[node.x, node.y], ...pts], { ...opt, noNames: true, name: `odg. ${node.name || ''}`.trim() });
+    const ns = PS.model.nodesOf(f), n0 = ns[0];
+    for (const q of ns.slice(1)) q.name = PS.model.nextName(project, PS.model.prefixFor(project, q.type));
+    Object.assign(n0, { name: node.name, type: node.type || 'Studnia', dn: node.dn, ti: node.ti ?? n0.ti, tp: node.tp ?? n0.tp, inv: null });
+    delete n0.invFix; // dno włączenia z konstrukcji spadku (nad dnem kanału głównego)
+    return f;
+  },
+  // mode 'lp' – odchylenie z kierunkiem L/P; '360' – kąt między odcinkami 0–360° mierzony po lewej stronie trasy (film 91)
+  angleText(a, mode = 'lp') {
+    if (!a || a.defl === null || Math.abs(a.defl) < 0.5) return '';
+    if (mode === 'pełny' || mode === '360') return `${PS.util.fix(180 - a.defl, 1)}°`;
+    return `${PS.util.fix(Math.abs(a.defl), 1)}° ${a.defl > 0 ? 'L' : 'P'}`;
+  },
+  // miejsce pod tabelą na schemat sieci [mm]
+  schemaH(project) { return PS.optOf(project).profile.schema ? 26 : 0; },
+
+  /* Elementy studni (zestawienie Detale): wysokość H = teren − dno; dennica, kręgi 1,0 / 0,5 / 0,25 m, zakończenie (konus DN1000
+     albo płyta pokrywowa), pierścienie wyrównawcze 0,10 / 0,08 / 0,06 m i właz; studzienka tworzywowa – rura trzonowa. */
+  WELL_KIT: { base: 0.8, cone: 0.6, plate: 0.2, hatch: 0.15, kineta: 0.35 },
+  wellDetail(project, n, c) {
+    const K = Object.assign({}, PS.model.WELL_KIT, project.wellKit || {});
+    const invs = [c.invIn, c.invOut].filter(has);
+    const top = PS.model.wellTop(n, c); // wierzch studni (z wyniesieniem ponad teren – Rz. g.)
+    if (!has(top) || !invs.length) return null;
+    const H = top - Math.min(...invs), dn = n.dn || 1.0;
+    if (dn < 0.8) {
+      // studzienka tworzywowa: kineta + rura trzonowa (do zakupu w pełnych 5 cm) + teleskop z włazem
+      const L = Math.max(0, Math.ceil((H - K.kineta - K.hatch) * 20 - 1e-6) / 20);
+      return { H, dn, plastic: true, base: K.kineta, pipe: L, top: '', hatch: K.hatch, r100: 0, r50: 0, r25: 0, adj: '', gap: 0 };
+    }
+    const topH = dn <= 1.0 ? K.cone : K.plate;
+    let rest = H - K.base - topH - K.hatch;
+    const ring = { r100: 0, r50: 0, r25: 0 };
+    if (rest > 0) for (const [k, h] of [['r100', 1.0], ['r50', 0.5], ['r25', 0.25]]) { ring[k] = Math.floor(rest / h + 1e-6); rest -= ring[k] * h; }
+    // pierścienie wyrównawcze: najlepsze wypełnienie reszty (≤ reszta + 1 cm)
+    let best = { s: 0, a: [0, 0, 0] };
+    if (rest > 0) for (let a = 0; a <= 3; a++) for (let b = 0; b <= 3; b++) for (let d = 0; d <= 3; d++) {
+      const s = a * 0.10 + b * 0.08 + d * 0.06;
+      if (s <= rest + 0.01 + 1e-9 && s > best.s) best = { s, a: [a, b, d] };
+    }
+    const adj = best.a.map((k, i) => (k ? `${k}×${[10, 8, 6][i]}` : '')).filter(Boolean).join(' + ');
+    return { H, dn, plastic: false, base: K.base, top: dn <= 1.0 ? `konus ${PS.util.fix(K.cone, 2)}` : `płyta ${PS.util.fix(K.plate, 2)}`, hatch: K.hatch, ...ring,
+      adj: adj ? adj + ' cm' : '', gap: rest - best.s, short: H < K.base + topH + K.hatch - 0.005 };
+  },
+
+  minLevel(pts) {
+    let lo = Infinity;
+    for (const p of pts) for (const v of [p.inv, p.invOut, p.ti, p.tp]) if (v !== null && v !== undefined && v < lo) lo = v;
+    return lo;
+  },
+  // poziom porównawczy: pełny metr ≥ 1 m pod najniższą rzędną i tak nisko, żeby pionowe opisy
+  // węzłów i skrzyżowań nad tabelą zmieściły się pod obiektami (jak w generatorze PK)
+  autoPP(project, pts, nodeCalc, crosses, nodes) {
+    const lo = PS.model.minLevel(pts);
+    let pp = isFinite(lo) ? lo - 1 : 0;
+    const vS = 1000 / project.scaleV;
+    for (const [n, c] of nodeCalc) {
+      if (nodes && !nodes.includes(n)) continue;
+      const bottom = Math.min(...[c.invIn, c.invOut].filter(v => v !== null));
+      if (isFinite(bottom) && PS.render) pp = Math.min(pp, bottom - (PS.render.nodeLabel(n, c).length * 1.36 + 8) / vS);
+    }
+    for (const k of crosses) {
+      const bottom = k.elev ?? k.terrain;
+      if (bottom !== null) pp = Math.min(pp, bottom - (PS.model.crossingLabel(k.c, k).length * 1.36 + 6) / vS);
+    }
+    return Math.floor(pp);
+  },
+
+  /* Ramka rysunkowa (mm): wysokość, moduł strony, max/min długość, miejsce na tabelkę, marginesy – jak Konfiguracja › Tabela › Ramka w PK. */
+  // ppChange: zmiana poziomu porównawczego w środku arkusza (jak w PK), gdy rysunek nie mieści się w wysokości ramki
+  FRAME: { height: 297, page: 210, maxLen: 1260, minLen: 420, title: 200, margin: 5, marginLeft: 20, offset: 15, ppChange: true },
+  PP_NOTE_H: 14, // miejsce nad terenem na opis zmiany PP [mm]
+  frame(project) { return Object.assign({}, PS.model.FRAME, project.frame || {}); },
+  // stałe elementy arkusza w poziomie: lewy margines + odsunięcie + kolumna nagłówków + odstęp do 1. rzędnej, koniec tabeli, tabelka
+  sheetFixed(fr) { return fr.marginLeft + fr.margin + fr.offset - 5 + 84 + 20 + 10 + 5 + fr.title + fr.margin; },
+
+  /* PP arkusza dla zakresu Mb a–b: stały PP projektu, jeśli rysunek mieści się w ramce; inaczej PP automatyczny
+     dla tego arkusza (odpowiednik zmiany poziomu porównawczego w PK). top = wysokość rysunku nad dołem tabeli [mm]. */
+  sheetPP(project, calc, a, b, reserve = 0) {
+    const fr = PS.model.frame(project), vS = 1000 / project.scaleV;
+    const yTop = project.rows.reduce((t, r) => t + (r.h || 1) * 10, 0);
+    const avail = fr.height - 2 * fr.margin - fr.offset - 2 - reserve - PS.model.schemaH(project);
+    const inR = d => (d ?? 0) >= a - 1e-6 && (d ?? 0) <= b + 1e-6;
+    const pts = calc.pts.filter(q => inR(q.dist)), nodes = calc.nodes.filter(q => inR(q.dist));
+    const crosses = (calc.crosses || []).filter(k => inR(k.c.dist));
+    const topFor = pp => {
+      let top = yTop + 75;
+      for (const q of pts) for (const v of [q.tp, q.ti]) if (v !== null && v !== undefined) top = Math.max(top, yTop + (v - pp) * vS + 10);
+      return top;
+    };
+    if (project.ppFixed !== null && project.ppFixed !== undefined && topFor(project.ppFixed) <= avail && PS.model.minLevel(pts) > project.ppFixed)
+      return { pp: project.ppFixed, changed: false, fits: true };
+    const pp = PS.model.autoPP(project, pts, calc.nodeCalc, crosses, nodes);
+    return { pp, changed: project.ppFixed !== null && project.ppFixed !== undefined, fits: topFor(pp) <= avail };
+  },
+
+  /* Ręczna zmiana PP w węźle (kolumna PP w TRASA, film 108): n.ppSet = rzędna (300) albo przyrost „@-5” względem poprzedniego PP.
+     Zwraca odcinki { a, b, pp, changed } dla zakresu [a, b] albo null, gdy w zakresie nie ma ręcznych zmian. */
+  manualPP(calc, a, b, basePP) {
+    const ch = calc.nodes.filter(n => has(n.ppSet) && n.ppSet !== '' && (n.dist ?? 0) > a + 1e-6 && (n.dist ?? 0) < b - 1e-6);
+    const before = calc.nodes.filter(n => has(n.ppSet) && n.ppSet !== '' && (n.dist ?? 0) <= a + 1e-6);
+    if (!ch.length && !before.length) return null;
+    const val = (prev, s) => { const t = String(s).trim(); const m = t.match(/^@\s*([+-]?\d+(?:[.,]\d+)?)$/); return m ? prev + PS.util.num(m[1]) : PS.util.num(t) ?? prev; };
+    let pp = basePP;
+    for (const n of before) pp = val(pp, n.ppSet);
+    const out = [{ a, b, pp, changed: before.length > 0 }];
+    for (const n of ch) { const last = out[out.length - 1]; last.b = n.dist; out.push({ a: n.dist, b, pp: val(last.pp, n.ppSet), changed: true }); }
+    return out;
+  },
+
+  /* Podział profilu na arkusze: cięcie w węzłach, arkusz ≤ maxLen, długość = wielokrotność modułu strony. */
+  planSheets(project, calc) {
+    const fr = PS.model.frame(project), hS = 1000 / project.scaleH;
+    const fixed = PS.model.sheetFixed(fr);
+    const capM = Math.max(10, (fr.maxLen - fixed) / hS); // metrów profilu na arkusz
+    const d0all = calc.pts.length ? calc.pts[0].dist ?? 0 : 0, d1all = calc.length;
+    const stops = calc.nodes.map(n => n.dist ?? 0);
+    // wysokość rysunku dla zakresu: tabela + teren nad PP + opisy pionowe; musi zmieścić się w ramce
+    const reserve = fr.ppChange ? PS.model.PP_NOTE_H : 0;
+    const fits = (a, b) => PS.model.sheetPP(project, calc, a, b, reserve).fits;
+    // najdalszy węzeł w (s, e], do którego zakres się mieści (co najmniej pierwszy węzeł – postęp)
+    const farthestFit = (s, e) => {
+      const cand = stops.filter(d => d > s + 1e-6 && d <= e + 1e-6);
+      if (fits(s, e)) return e;
+      let best = cand.length ? cand[0] : e;
+      for (const d of cand) { if (fits(s, d)) best = d; else break; }
+      return best;
+    };
+    const ranges = [];
+    let s = d0all;
+    while (s < d1all - 1e-6) {
+      let e = Math.min(d1all, s + capM);
+      const cand = stops.filter(d => d > s + 1e-6 && d <= e + 1e-6);
+      if (e < d1all - 1e-6 && cand.length) e = cand[cand.length - 1];
+      if (!fr.ppChange) e = farthestFit(s, e); // bez zmiany PP arkusz kończy się, gdy rysunek przestaje się mieścić
+      ranges.push([s, e]);
+      s = e;
+      if (ranges.length > 500) break;
+    }
+    if (!ranges.length) ranges.push([d0all, d1all]);
+    return ranges.map(([a, b]) => {
+      const need = fixed + (b - a) * hS;
+      const len = Math.max(fr.minLen, Math.ceil(need / fr.page - 1e-9) * fr.page);
+      // odcinki o wspólnym PP w obrębie arkusza; granica = zmiana poziomu porównawczego
+      const pps = [];
+      let x = a;
+      while (x < b - 1e-6 || !pps.length) {
+        const y = fr.ppChange ? farthestFit(x, b) : b;
+        const r = PS.model.sheetPP(project, calc, x, y, reserve);
+        const last = pps[pps.length - 1];
+        if (last && last.pp === r.pp) last.b = y; else pps.push({ a: x, b: y, pp: r.pp, changed: r.changed, fits: r.fits });
+        if (y <= x + 1e-9) break;
+        x = y;
+        if (pps.length > 200) break;
+      }
+      const man = PS.model.manualPP(calc, a, b, pps[0].pp);
+      return { d0: a, d1: b, len: Math.min(len, Math.max(fr.maxLen, fr.minLen)), pps: man || pps };
+    });
+  },
+
+  /* Trasa z punktów planu (wyznaczona myszką lub z polilinii DXF): węzły w wierzchołkach, kilometraż z długości,
+     teren z próbników DXF (istn./proj.), punkty terenu co `step` m; dno = teren − (Z. min + wymiar sieci). */
+  buildRoute(project, xy, { name, sampleI, sampleP, step = 5, prefix = null, noNames = false } = {}) {
+    const nt = PS.model.baseNodeType(project);
+    // kolejne numery projektu wg rodzaju węzła (S1, S2… / D1, D2…); noNames – nazwy nada wywołujący (dostawienie trasy)
+    const pre = prefix || PS.model.prefixFor(project, nt);
+    const nextName = () => (noNames ? '' : PS.model.nextName(project, pre));
+    const r2 = v => (v === null || v === undefined || !isFinite(v) ? null : Math.round(v * 100) / 100);
+    const f = PS.model.newProfile({ name: name || `Trasa ${project.profiles.length + 1}` });
+    let dist = 0;
+    for (let i = 0; i < xy.length; i++) {
+      const [x, y] = xy[i];
+      if (i) {
+        const [px, py] = xy[i - 1], L = Math.hypot(x - px, y - py);
+        if (step > 0 && (sampleI || sampleP)) for (let s = step; s < L - step * 0.3; s += step) {
+          const t = s / L, qx = px + (x - px) * t, qy = py + (y - py) * t;
+          const ti = sampleI ? r2(sampleI(qx, qy)) : null, tp = sampleP ? r2(sampleP(qx, qy)) : null;
+          if (ti !== null || tp !== null) f.points.push(PS.model.newPoint({ kind: 'terrain', type: '', name: '', dist: r2(dist + s), x: qx, y: qy, ti, tp, dn: null }));
+        }
+        dist += L;
+      }
+      const ti = sampleI ? r2(sampleI(x, y)) : null, tp = sampleP ? r2(sampleP(x, y)) : null;
+      const t = tp ?? ti;
+      f.points.push(PS.model.newPoint({
+        name: nextName(), type: nt, dist: r2(dist), x, y, ti, tp,
+        // nowa trasa: dno na głębokości rysowania (domyślnie 2,8 m pod terenem); w pierwszym węźle – stałe (pogrubione)
+        inv: t !== null ? r2(t - (project.drawDepth ?? 2.8)) : null,
+        invFix: i === 0 && t !== null ? true : undefined,
+        dn: nt === 'Studnia' ? 1.2 : null, pipeDn: i ? project.defaultDn : null,
+      }));
+    }
+    return f;
+  },
+
+  /* Po przesunięciu węzła na planie: kilometraż z geometrii węzłów; punkty terenu, uzbrojenie i elementy
+     przesuwane proporcjonalnie w obrębie swojego odcinka. Zwraca false, gdy węzły nie mają współrzędnych. */
+  recomputeChainage(profile) {
+    const nodes = profile.points.filter(q => q.kind === 'node').sort((a, b) => a.dist - b.dist);
+    if (nodes.length < 2 || nodes.some(q => q.x === null || q.y === null)) return false;
+    const old = nodes.map(q => q.dist), nw = [old[0]];
+    for (let i = 1; i < nodes.length; i++) nw.push(nw[i - 1] + Math.hypot(nodes[i].x - nodes[i - 1].x, nodes[i].y - nodes[i - 1].y));
+    const remap = d => {
+      for (let i = 1; i < old.length; i++) if (d <= old[i] + 1e-9 || i === old.length - 1) {
+        const t = old[i] > old[i - 1] ? (d - old[i - 1]) / (old[i] - old[i - 1]) : 0;
+        return { d: nw[i - 1] + t * (nw[i] - nw[i - 1]), i, t };
+      }
+      return { d, i: 1, t: 0 };
+    };
+    const r3 = v => Math.round(v * 1000) / 1000;
+    for (const q of profile.points) {
+      if (q.kind === 'node') continue;
+      const { d, i, t } = remap(q.dist);
+      q.dist = r3(d);
+      const a = nodes[i - 1], b = nodes[i];
+      if (a && b) { q.x = a.x + (b.x - a.x) * t; q.y = a.y + (b.y - a.y) * t; }
+    }
+    for (const c of [...(profile.crossings || []), ...(profile.elements || []), ...(profile.boreholes || [])]) c.dist = r3(remap(c.dist).d);
+    for (const e of profile.elements || []) if (has(e.dist2)) e.dist2 = r3(remap(e.dist2).d);
+    nodes.forEach((q, i) => { q.dist = r3(nw[i]); });
+    PS.model.normalize(profile);
+    return true;
+  },
+
+  /* ---------- drzewo sieci: węzeł profilu, w którym zaczyna się odgałęzienie (ta sama nazwa PZ albo X/Y w 5 cm) */
+  nodesOf(f) { return f.points.filter(q => q.kind === 'node').sort((a, b) => a.dist - b.dist); },
+  sameNode(a, b) {
+    if (a.name && b.name && a.name === b.name) return true;
+    return has(a.x) && has(b.x) && has(a.y) && has(b.y) && Math.hypot(a.x - b.x, a.y - b.y) < 0.05;
+  },
+  // profil i węzeł, do którego włączony jest profil f (węzeł o indeksie > 0 – nie początek innego profilu)
+  hostOf(project, f) {
+    const n0 = PS.model.nodesOf(f)[0];
+    if (!n0) return null;
+    // powiązanie trwałe (f.hostNode – id węzła włączenia), potem po nazwie PZ / X/Y
+    if (f.hostNode) for (const g of project.profiles) {
+      if (g === f) continue;
+      const ns = PS.model.nodesOf(g), i = ns.findIndex(q => q.id === f.hostNode);
+      if (i > 0) return { f: g, node: ns[i], index: i };
+    }
+    for (const g of project.profiles) {
+      if (g === f) continue;
+      const ns = PS.model.nodesOf(g);
+      for (let i = 1; i < ns.length; i++) if (PS.model.sameNode(ns[i], n0)) return { f: g, node: ns[i], index: i };
+    }
+    return null;
+  },
+  /* Grupy rysunku „profil główny + odgałęzienia obok” (jak w przykładach PK): dla każdego profilu głównego (bez włączenia)
+     lista [główny, odgałęzienia w kolejności węzłów włączenia, ich odgałęzienia…]; list – profile do uwzględnienia (domyślnie wszystkie). */
+  treeGroups(project, list) {
+    const set = new Set(list || project.profiles), groups = [], seen = new Set();
+    const nodeIdx = (g, n) => PS.model.nodesOf(g).indexOf(n);
+    const walk = (f, out) => {
+      if (seen.has(f)) return; seen.add(f);
+      if (set.has(f)) out.push(f);
+      PS.model.branchesOf(project, f).sort((a, b) => nodeIdx(f, a.node) - nodeIdx(f, b.node)).forEach(b => walk(b.f, out));
+    };
+    for (const f of project.profiles) if (!PS.model.hostOf(project, f)) { const out = []; walk(f, out); if (out.length) groups.push(out); }
+    for (const f of project.profiles) if (set.has(f) && !seen.has(f)) { const out = []; walk(f, out); if (out.length) groups.push(out); } // pętle w drzewie
+    return groups;
+  },
+  // odgałęzienia włączone w węzłach profilu f: rzędna dna i wymiar pierwszego odcinka odgałęzienia
+  branchesOf(project, f) {
+    const out = [];
+    const ns = PS.model.nodesOf(f);
+    for (const g of project.profiles) {
+      if (g === f) continue;
+      const gs = PS.model.nodesOf(g);
+      if (gs.length < 1) continue;
+      const node = (g.hostNode && ns.find((q, i) => i > 0 && q.id === g.hostNode)) || ns.find((q, i) => i > 0 && PS.model.sameNode(q, gs[0]));
+      if (!node) continue;
+      out.push({ f: g, node, inv: gs[0].invOut ?? gs[0].inv ?? null, dn: (gs[1] && gs[1].pipeDn) ?? project.defaultDn });
+    }
+    return out;
+  },
+  /* Aktualizacja odgałęzień po zmianie profilu (rekurencyjnie w głąb drzewa sieci): pierwszy węzeł odgałęzienia przejmuje
+     z węzła włączenia nazwę, typ, wymiar, X/Y i rzędne terenu; po przesunięciu węzła – kilometraż odgałęzienia z X/Y.
+     Powiązanie zapisywane jako g.hostNode (id węzła), więc przetrwa zmianę nazwy albo przesunięcie węzła głównego. */
+  syncBranches(project, f, seen = new Set()) {
+    if (seen.has(f)) return 0;
+    seen.add(f);
+    let n = 0;
+    for (const b of PS.model.branchesOf(project, f)) {
+      const g = b.f, h = b.node, g0 = PS.model.nodesOf(g)[0];
+      if (!g0) continue;
+      g.hostNode = h.id;
+      let moved = false, ch = false;
+      for (const k of ['name', 'type', 'dn', 'ti', 'tp']) if (h[k] !== undefined && g0[k] !== h[k]) { g0[k] = h[k]; ch = true; }
+      // przesunięcie > 5 mm – nowe X/Y i kilometraż (drobne różnice z importu nie zmieniają Mb)
+      if (has(h.x) && has(h.y) && (!has(g0.x) || Math.hypot(g0.x - h.x, g0.y - h.y) > 0.005)) { g0.x = h.x; g0.y = h.y; moved = true; }
+      if (moved) PS.model.recomputeChainage(g);
+      // zmiana dna / terenu w węźle włączenia → automatyczna konstrukcja spadku odgałęzienia (rzędne wpisane ręcznie zostają)
+      const sig = [h.inv, h.invOut, h.ti, h.tp, h.dn].map(v => (has(v) ? Math.round(v * 1000) : '')).join('|');
+      if (g.hostSig !== undefined && g.hostSig !== sig) {
+        // studnia włączeniowa: dno studni = nowe dno kolektora; przy progu odgałęzienie przesuwa się razem z kolektorem (spadki bez zmian)
+        const s0 = g0.invOut ?? g0.inv;
+        if (PS.model.inletWell(project, g, 'manual', s0)) {
+          const d = has(s0) && has(g0.progHost) ? Math.round(((g0.invOut ?? g0.inv) - s0) * 1000) / 1000 : 0;
+          if (d) for (const q of PS.model.nodesOf(g).slice(1)) { if (has(q.inv)) q.inv = Math.round((q.inv + d) * 1000) / 1000; if (has(q.invOut)) q.invOut = Math.round((q.invOut + d) * 1000) / 1000; }
+          ch = true;
+        }
+        const r = PS.model.construct(project, g, { keep: 'manual' }); if (r.changed) ch = true;
+      } else if (!g0.hostWell && PS.model.eff(project, g).flow === 'grawitacyjna' && PS.model.inletWell(project, g, 'manual', g0.invOut ?? g0.inv)) ch = true; // dawne odgałęzienia: studnia włączeniowa
+      g.hostSig = sig;
+      if (ch || moved) n++;
+      n += PS.model.syncBranches(project, g, seen);
+    }
+    return n;
+  },
+
+  /* Teren projektowany dowiązany do istniejącego: punkty bez RTp dostają RTi + różnicę (RTp − RTi) interpolowaną
+     między punktami, w których wpisano oba tereny (tpAuto = wartość wyliczona, nadpisywana przy każdej zmianie). */
+  linkTerrain(project, profile) {
+    const pts = profile.points;
+    if (!project.tpLink) {
+      for (const p of pts) if (p.tpAuto) { p.tp = null; delete p.tpAuto; }
+      return;
+    }
+    const anchors = pts.filter(p => !p.tpAuto && has(p.tp) && has(p.ti)).sort((a, b) => a.dist - b.dist).map(p => [p.dist, p.tp - p.ti]);
+    for (const p of pts) {
+      if (!(p.tpAuto || !has(p.tp))) continue;
+      if (!anchors.length || !has(p.ti)) { if (p.tpAuto) { p.tp = null; delete p.tpAuto; } continue; }
+      let off = anchors[0][1];
+      if (p.dist >= anchors[anchors.length - 1][0]) off = anchors[anchors.length - 1][1];
+      else for (let i = 1; i < anchors.length; i++) if (p.dist <= anchors[i][0]) {
+        const [d0, o0] = anchors[i - 1], [d1, o1] = anchors[i];
+        off = d1 > d0 ? o0 + (o1 - o0) * Math.max(0, p.dist - d0) / (d1 - d0) : o1;
+        break;
+      }
+      p.tp = Math.round((p.ti + off) * 100) / 100; p.tpAuto = true;
+    }
+  },
+
+  /* Wartości per profil (SIEĆ › Wartości / Parametry w PK, filmy 103–115): profile.par nadpisuje ustawienia projektu,
+     puste pole = dziedziczone. Zwraca projekt „efektywny” (prototyp = projekt), więc reszta kodu czyta pola jak zwykle. */
+  PAR_KEYS: ['ppFixed', 'scaleH', 'scaleV', 'spMin', 'spMax', 'zMin', 'zMax', 'defaultDn', 'construct', 'startKm'],
+  eff(project, profile) {
+    const par = profile && profile.par;
+    if (!project || !par || project.__effOf === profile) return project;
+    const o = {};
+    for (const k of PS.model.PAR_KEYS) if (par[k] !== null && par[k] !== undefined && par[k] !== '') o[k] = par[k];
+    if (!Object.keys(o).length) return project;
+    // skala < 10 = mnożnik skali projektu (film 109)
+    for (const k of ['scaleH', 'scaleV']) if (o[k] !== undefined && o[k] < 10) o[k] = project[k] * o[k];
+    if (o.zMax !== undefined && (o.zMin ?? project.zMin) > o.zMax) o.zMax = o.zMin ?? project.zMin; // Z. max ≥ Z. min (film 113)
+    return Object.assign(Object.create(project), o, { __effOf: profile });
+  },
+
+  /* Spadek minimalny odcinka [%]: Sp. min z ustawień, a gdy 0 – reguła 1/D (D w mm) dla przepływu grawitacyjnego. */
+  minSlope(project, dn) {
+    if (project.spMin > 0) return project.spMin;
+    return project.flow === 'grawitacyjna' && dn > 0 ? 100 / (dn * 1000) : 0;
+  },
+
+  /* Konstrukcja spadku (Konfiguracja projektu PK › Konstrukcja spadku profili):
+     od początku – od pierwszego węzła (wylotu) w górę, domyślnie zagłębienie maks., z ograniczeniem spadku min.;
+     od końca – od ostatniego węzła w dół, domyślnie zagłębienie min. (przykrycie), z ograniczeniem spadku maks.;
+     spadek zadany odcinka (slopeSet) ma pierwszeństwo; łączenie odcinków w węźle po dnie, osi albo stropie.
+     keep: 'manual' – zachowaj rzędne wpisane ręcznie (invFix / invOutFix), 'empty' – uzupełnij tylko puste, 'all' – przelicz wszystkie. */
+  construct(project, profile, { keep = 'manual' } = {}) {
+    project = PS.model.eff(project, profile);
+    PS.model.applyDepthFix(profile);
+    const nodes = PS.model.nodesOf(profile);
+    const res = { changed: 0, missing: [], host: null, cascades: [] };
+    // kaskady (studnie spadowe) tylko przy ograniczeniu Sp. max – bez niego spadek dopasowuje się do terenu
+    const cascade = project.cascade !== false && project.spMax > 0;
+    if (nodes.length < 2) return res;
+    PS.model.linkTerrain(project, profile);
+    const r2 = v => Math.round(v * 100) / 100;
+    const t = n => n.tp ?? n.ti ?? null;
+    const segDn = [];
+    for (let i = 1; i < nodes.length; i++) segDn[i] = nodes[i].pipeDn ?? segDn[i - 1] ?? project.defaultDn;
+    const free = (n, k) => keep === 'all' ? true : keep === 'empty' ? !has(n[k]) : !n[k + 'Fix'];
+    // różnica rzędnych dna w węźle i: odcinek powyżej (i→i+1) względem odcinka poniżej (i−1→i)
+    const joinOff = (dDown, dUp) => project.joinBy === 'strop' ? dDown - dUp : project.joinBy === 'os' ? (dDown - dUp) / 2 : 0;
+    const off = i => (has(segDn[i]) && has(segDn[i + 1]) ? joinOff(segDn[i], segDn[i + 1]) : 0);
+    const set = (n, k, v) => { if (!free(n, k)) return; const val = r2(v); if (n[k] !== val) res.changed++; n[k] = val; };
+    const setOut = (n, v) => {
+      if (!free(n, 'invOut')) return;
+      const val = Math.abs(v - n.inv) > 0.004 ? r2(v) : null;
+      if (n.invOut !== val && !(n.invOut === undefined && val === null)) res.changed++;
+      n.invOut = val;
+    };
+    const sMin = i => PS.model.minSlope(project, segDn[i]) / 100;
+    const sMax = project.spMax > 0 ? project.spMax / 100 : Infinity;
+
+    if (project.flow !== 'grawitacyjna') {
+      // przepływ ciśnieniowy: stałe przykrycie Z. min nad rurą, bez kontroli spadku
+      nodes.forEach((n, i) => {
+        const dn = Math.max(segDn[i] || 0, segDn[i + 1] || 0);
+        if (t(n) === null) { res.missing.push(n.name); return; }
+        set(n, 'inv', t(n) - project.zMin - dn); setOut(n, n.inv);
+      });
+      return res;
+    }
+    // odgałęzienie ze stałym włączeniem (próg albo rzędna włączenia wpisana) – zawsze od włączenia w górę:
+    // od końca przy stałym dnie włączenia powstawałby przeciwspadek na pierwszym odcinku
+    const fixedInlet = has(nodes[0].progHost) || (nodes[0].hostWell && nodes[0].invOutFix);
+    if (project.construct === 'start' || (fixedInlet && PS.model.hostOf(project, profile))) {
+      const n0 = nodes[0];
+      // początek dowiązany do profilu głównego (łączenie jak w węzłach) albo zagłębienie maks.
+      const host = PS.model.hostOf(project, profile);
+      // studnia włączeniowa (pierwszy węzeł odgałęzienia): dno studni = dno kolektora (lewa strona linii w tabeli),
+      // dno włączenia = dno kolektora + próg albo łączenie jak w węzłach (prawa strona, Rz. dna wylotowa)
+      if (host && PS.model.inletWell(project, profile, keep)) { res.host = `${host.f.name} / ${host.node.name}`; res.changed++; }
+      if (!res.host && free(n0, 'inv')) { if (t(n0) === null) res.missing.push(n0.name); else set(n0, 'inv', t(n0) - project.zMax); }
+      if (!has(n0.inv)) return res;
+      for (let i = 1; i < nodes.length; i++) {
+        const a = nodes[i - 1], b = nodes[i], L = b.dist - a.dist;
+        let s0 = a.invOut ?? a.inv;
+        if (!has(s0)) break;
+        if (free(b, 'inv')) {
+          let v;
+          if (has(b.slopeSet)) v = s0 + b.slopeSet / 100 * L;
+          else {
+            if (t(b) === null) res.missing.push(b.name);
+            const cand = t(b) !== null ? t(b) - project.zMax : null;
+            // teren rośnie szybciej niż Sp. max: nawet przy Sp. max rura doszłaby do b głębiej niż Z. max –
+            // kaskada w węźle a (odcinek a→b zaczyna się wyżej), dla wylotu – wyższy początek
+            if (cascade && cand !== null && cand > s0 + sMax * L + 0.005) {
+              const ns0 = Math.ceil((cand - sMax * L) * 100 - 1e-6) / 100;
+              if (i - 1 > 0 && free(a, 'invOut')) { setOut(a, ns0); if (has(a.invOut)) { s0 = a.invOut; res.cascades.push(a.name); } }
+              else if (i - 1 === 0 && free(a, 'inv') && !res.host) { set(a, 'inv', ns0); s0 = a.inv; }
+            }
+            const lo = s0 + sMin(i) * L, hi = s0 + sMax * L;
+            v = Math.min(hi, Math.max(lo, cand ?? lo));
+            // zaokrąglenie do cm: w górę (spadek ≥ min., zagłębienie ≤ maks.), przy Sp. max – w dół
+            v = v >= hi - 1e-9 ? Math.floor(v * 100 + 1e-6) / 100 : Math.ceil(v * 100 - 1e-6) / 100;
+          }
+          set(b, 'inv', v);
+        }
+        if (i < nodes.length - 1 && has(b.inv)) setOut(b, b.inv + off(i));
+      }
+      return res;
+    }
+    // od końca; odgałęzienia policzone wcześniej (constructAll) ograniczają głębokość węzłów, do których się włączają:
+    // dno kanału w węźle ≤ dno odgałęzienia (łączenie po dnie; po osi / stropie – z różnicą średnic)
+    const brs = PS.model.branchesOf(project, profile).filter(b => has(b.inv));
+    const cap = (n, dDown) => Math.min(Infinity, ...brs.filter(b => b.node === n).map(b => b.inv - joinOff(dDown, b.dn)));
+    const m = nodes.length - 1, nl = nodes[m];
+    if (free(nl, 'inv')) { if (t(nl) === null) res.missing.push(nl.name); else set(nl, 'inv', Math.min(t(nl) - project.zMin - segDn[m], cap(nl, segDn[m]))); }
+    for (let i = m; i >= 1; i--) {
+      const a = nodes[i - 1], b = nodes[i], L = b.dist - a.dist;
+      if (!has(b.inv)) break;
+      const o = off(i - 1);
+      if (!free(a, 'inv')) { if (i - 1 > 0) setOut(a, a.inv + o); continue; }
+      let X; // X = dno odcinka a→b w węźle a
+      if (!free(a, 'invOut') && has(a.invOut)) X = a.invOut;
+      else if (has(b.slopeSet)) X = b.inv - b.slopeSet / 100 * L;
+      else {
+        // wylot i budynek nie mają wymaganego przykrycia (jak w diagnostyce) – odcinek ze spadkiem minimalnym
+        const noCover = a.type === 'Wylot' || a.type === 'Budynek';
+        if (t(a) === null && !noCover) res.missing.push(a.name);
+        // przykrycie Z. min nad obiema rurami w węźle: dopływającą (X + dn) i odpływającą (X − o + dn)
+        const crown = Math.max(segDn[i], i - 1 > 0 ? segDn[i - 1] - o : 0);
+        const cand = t(a) !== null && !noCover ? t(a) - project.zMin - crown : null;
+        // teren opada szybciej niż Sp. max albo węzeł a musi być niżej pod włączenia: nawet przy Sp. max rura nie doszłaby
+        // do a wystarczająco nisko – kaskada w węźle b (odcinek b→a zaczyna się niżej); w ostatnim węźle – głębszy początek
+        const capA = cap(a, i - 1 > 0 ? segDn[i - 1] : segDn[i]) + o, target = Math.min(cand ?? Infinity, capA);
+        if (cascade && isFinite(target) && target < b.inv - sMax * L - 0.005 && free(b, 'inv') && (i === m || free(b, 'invOut'))) {
+          const arrive = i < m ? (b.invOut ?? b.inv + off(i)) : null;
+          set(b, 'inv', Math.floor((target + sMax * L) * 100 + 1e-6) / 100);
+          if (arrive !== null) { setOut(b, arrive); if (has(b.invOut)) res.cascades.push(b.name); }
+        }
+        const lo = b.inv - sMax * L, hi = b.inv - sMin(i) * L;
+        X = Math.min(hi, Math.max(lo, cand ?? hi), capA);
+        // zaokrąglenie do cm: w dół (spadek ≥ min., przykrycie ≥ Z. min), przy Sp. max – w górę
+        X = X <= lo + 1e-9 ? Math.ceil(X * 100 - 1e-6) / 100 : Math.floor(X * 100 + 1e-6) / 100;
+      }
+      set(a, 'inv', i - 1 > 0 ? X - o : X);
+      if (i - 1 > 0) setOut(a, X);
+    }
+    // odgałęzienie: obliczone dno w pierwszym węźle to dno włączenia; dno studni = dno kolektora
+    const hostE = PS.model.hostOf(project, profile);
+    if (hostE && PS.model.inletWell(project, profile, keep, nodes[0].inv)) res.host = `${hostE.f.name} / ${hostE.node.name}`;
+    return res;
+  },
+  // kolejność konstrukcji całego projektu: od początku – profile główne, potem odgałęzienia (dowiązanie do rzędnych głównego);
+  // od końca – odwrotnie: odgałęzienia, potem kanały, do których się włączają (pogłębienie pod włączenia)
+  constructAll(project, opt) {
+    const done = new Set(), order = [];
+    for (let pass = 0; pass < project.profiles.length + 1 && done.size < project.profiles.length; pass++)
+      for (const f of project.profiles) {
+        if (done.has(f)) continue;
+        const h = PS.model.hostOf(project, f);
+        if (h && !done.has(h.f) && pass < project.profiles.length) continue;
+        order.push(f); done.add(f);
+      }
+    if (project.construct !== 'start') order.reverse();
+    const res = order.map(f => ({ f, ...PS.model.construct(project, f, opt) }));
+    // od końca kolektory liczone po odgałęzieniach: dno studni włączeniowej wg ostatecznego dna kolektora
+    if (project.construct !== 'start') for (const f of order) { const n0 = PS.model.nodesOf(f)[0]; if (n0 && n0.hostWell) PS.model.inletWell(project, f, 'manual', n0.invOut ?? n0.inv); }
+    return res;
+  },
+
+  /* Skrzyżowania z sieciami innych projektów (i niepowiązanymi profilami tego projektu) wyznaczone z geometrii planu:
+     przecięcie odcinków w X/Y, rzędna dna drugiej sieci w punkcie przecięcia. Zastępuje wcześniejsze skrzyżowania auto. */
+  autoCrossings(projects, project) {
+    const segsXY = (p, f) => {
+      const calc = PS.model.compute(p, f), out = [];
+      for (const s of calc.segs) if (has(s.a.x) && has(s.a.y) && has(s.b.x) && has(s.b.y)) out.push(s);
+      return out;
+    };
+    const others = [];
+    for (const p of projects) { if (p.off) continue; for (const f of p.profiles) if (!f.off) others.push({ p, f, segs: segsXY(p, f) }); }
+    let count = 0;
+    for (const f of project.profiles) {
+      if (f.off) continue;
+      const mine = segsXY(project, f);
+      const found = [];
+      for (const o of others) {
+        if (o.f === f) continue;
+        for (const s of mine) for (const q of o.segs) {
+          // pomijamy odcinki ze wspólnym węzłem (włączenia i połączenia w drzewie sieci) – tylko w tym samym projekcie;
+          // między projektami (np. KD i KS, oba z węzłami S1, S2…) ta sama nazwa nie oznacza wspólnego węzła
+          if (o.p === project && [s.a, s.b].some(x => [q.a, q.b].some(y => PS.model.sameNode(x, y)))) continue;
+          const d1x = s.b.x - s.a.x, d1y = s.b.y - s.a.y, d2x = q.b.x - q.a.x, d2y = q.b.y - q.a.y;
+          const den = d1x * d2y - d1y * d2x;
+          if (Math.abs(den) < 1e-9) continue;
+          const ex = q.a.x - s.a.x, ey = q.a.y - s.a.y;
+          const u = (ex * d2y - ey * d2x) / den, v = (ex * d1y - ey * d1x) / den;
+          if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+          const dist = Math.round((s.a.dist + u * (s.b.dist - s.a.dist)) * 100) / 100;
+          const inv = has(q.i0) && has(q.i1) ? Math.round((q.i0 + v * (q.i1 - q.i0)) * 100) / 100 : null;
+          found.push(PS.model.newCrossing({
+            dist, status: 'Proj.', type: PS.NET_UTIL[o.p.netType] || 'Rura', sub: (o.p.netKind || '').toLowerCase(), dn: q.dn, elev: inv,
+            ref: `${o.p.name} / ${o.f.name} ${q.a.name}–${q.b.name}`, x: s.a.x + u * d1x, y: s.a.y + u * d1y, auto: true,
+          }));
+        }
+      }
+      // skrzyżowanie wyznaczone automatycznie, a potem poprawione przez użytkownika (ref, bez auto) – zostaje, nie dublujemy go
+      const kept = (f.crossings || []).filter(c => !c.auto);
+      const fresh = found.filter(c => !kept.some(k => k.ref && k.ref === c.ref && Math.abs(k.dist - c.dist) < 0.5));
+      f.crossings = kept.concat(fresh);
+      count += fresh.length;
+    }
+    return count;
+  },
+
+  /* Edycja niwelety w tabeli ODCINKI (jak w PK, film 12/38): Próg, Rz. pocz., Spadek, Rz. końc. odcinka a→b.
+     Zmiana przesuwa dalszą część profilu (kolejne węzły) z zachowaniem ich spadków; „S” w polu spadku oznacza
+     odcinek ciągu o stałym spadku (znacznik >>) do końca ciągu – spadek = różnica rzędnych / suma długości. */
+  // stałe zagłębienia (depthFix – dno, depthOutFix – dno wylotowe) przeliczane z bieżącego terenu węzła
+  applyDepthFix(profile) {
+    const r3 = v => Math.round(v * 1000) / 1000;
+    for (const n of profile.points) {
+      if (n.kind !== 'node') continue;
+      const t = n.tp ?? n.ti;
+      if (!has(t)) continue;
+      if (has(n.depthFix)) { n.inv = r3(t - n.depthFix); n.invFix = true; }
+      if (has(n.depthOutFix)) { n.invOut = r3(t - n.depthOutFix); n.invOutFix = true; }
+    }
+  },
+  /* Studnia włączeniowa – pierwszy węzeł odgałęzienia, wspólny z węzłem kolektora (jak w PK):
+     Rz. dna (inv, lewa strona linii w tabeli) = dno kolektora w tej studni; Rz. dna wylotowa (invOut, prawa strona) = dno włączenia:
+     dno kolektora + próg (progHost), wpisane ręcznie (invOutFix), obliczone (computed) albo łączenie jak w węzłach (po dnie / osi / stropie).
+     Zwraca false, gdy kolektor nie ma rzędnej dna. */
+  inletWell(project, profile, keep = 'manual', computed = null) {
+    const ns = PS.model.nodesOf(profile), n0 = ns[0], host = PS.model.hostOf(project, profile);
+    if (!n0 || !host || PS.model.eff(project, profile).flow !== 'grawitacyjna') return false; // sieci ciśnieniowe – bez studni
+    const hb = PS.model.hostBottom(project, profile);
+    if (!has(hb)) return false;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    if (!n0.hostWell) {
+      // dawny zapis: dno włączenia w Rz. dna węzła – przenosi się na prawą stronę (dno wylotowe)
+      if (has(n0.inv) && !has(n0.invOut)) { n0.invOut = n0.inv; if (n0.invFix) n0.invOutFix = true; }
+      else if (n0.invFix && has(n0.invOut)) n0.invOutFix = true;
+    }
+    let iv;
+    if (has(n0.progHost)) iv = hb + n0.progHost;
+    else if (keep !== 'all' && n0.invOutFix && has(n0.invOut)) iv = n0.invOut;
+    else if (has(computed)) iv = computed;
+    else {
+      const hc = PS.model.compute(project, host.f).nodeCalc.get(host.node), e = PS.model.eff(project, profile);
+      const dDown = (hc && hc.dnIn) || 0, dUp = (ns[1] && ns[1].pipeDn) ?? e.defaultDn;
+      const jo = e.joinBy === 'strop' ? dDown - dUp : e.joinBy === 'os' ? (dDown - dUp) / 2 : 0;
+      iv = hc && has(hc.invIn) ? hc.invIn + jo : hb;
+    }
+    n0.hostWell = true; delete n0.invFix; delete n0.depthFix;
+    n0.inv = r3(hb);
+    n0.invOut = Math.abs(iv - hb) > 0.004 ? r3(iv) : null;
+    return true;
+  },
+  // dno kolektora w węźle włączenia odgałęzienia (najniższe z dna wlotowego / wylotowego węzła profilu głównego)
+  hostBottom(project, profile) {
+    const host = PS.model.hostOf(project, profile);
+    if (!host) return null;
+    const hc = PS.model.compute(project, host.f).nodeCalc.get(host.node);
+    const v = hc ? [hc.invIn, hc.invOut].filter(has) : [];
+    return v.length ? Math.min(...v) : null;
+  },
+  editSegment(profile, bId, field, raw, project) {
+    const ns = PS.model.nodesOf(profile), i = ns.findIndex(n => n.id === bId);
+    if (i < 1) return 'Brak odcinka.';
+    const a = ns[i - 1], b = ns[i], L = b.dist - a.dist, r3 = v => Math.round(v * 1000) / 1000;
+    const shiftFrom = (j, d) => { if (!d) return; for (let k = j; k < ns.length; k++) { if (has(ns[k].inv)) ns[k].inv = r3(ns[k].inv + d); if (has(ns[k].invOut)) ns[k].invOut = r3(ns[k].invOut + d); } };
+    const start = () => a.invOut ?? a.inv;
+    const s = String(raw ?? '').trim();
+    if (field === 'slope' && /^s/i.test(s)) { b.sConst = true; delete b.slopeSet; PS.model.constChains(profile); return null; }
+    const v = PS.util.num(s.replace(/>+$/, ''));
+    if (s !== '' && v === null) return `Niepoprawna liczba: „${raw}”`;
+    if (field === 'prog' && i - 1 === 0 && project && PS.model.hostOf(project, profile)) {
+      // pierwsza studnia odgałęzienia (włączeniowa): próg = wysokość dna włączenia nad dnem kolektora
+      const old = start();
+      if (v === null) { delete a.progHost; delete a.invOutFix; } else { a.progHost = r3(v); a.invOutFix = true; }
+      if (!PS.model.inletWell(project, profile)) return 'Brak rzędnej dna kolektora w węźle włączenia.';
+      shiftFrom(i, start() - old);
+    } else if (field === 'prog') {
+      // także pierwszy węzeł: studnia na kolektorze istniejącym (spoza projektu) – Rz. dna = dno kolektora, próg = dno włączenia nad nim
+      if (!has(a.inv)) return i - 1 === 0 ? 'Wpisz najpierw Rz. dna studni (dno kolektora) w tabeli TRASA.' : 'Brak rzędnej dna w węźle początkowym.';
+      const old = start(), nv = v ? r3(a.inv + v) : null;
+      a.invOut = nv; if (nv === null) delete a.invOutFix; else a.invOutFix = true;
+      shiftFrom(i, start() - old);
+    } else if ((field === 'i0' || field === 'i1') && v !== null && v < 0) {
+      // wartość ujemna (np. −1,0) = stałe zagłębienie dna pod terenem w tym węźle – przypisane na stałe, nadąża za terenem
+      const n = field === 'i1' ? b : a, out = field === 'i0' && i - 1 > 0;
+      const t = n.tp ?? n.ti;
+      if (!has(t)) return `${n.name || 'Węzeł'}: brak rzędnej terenu – zagłębienia ${raw} nie da się przypisać.`;
+      if (out) { n.depthOutFix = Math.abs(v); n.invOutFix = true; } else { n.depthFix = Math.abs(v); n.invFix = true; delete n.progHost; }
+      PS.model.applyDepthFix(profile);
+      if (field === 'i1') b.slopeSet = null;
+    } else if (field === 'i0') {
+      if (v === null) return 'Wpisz rzędną początkową.';
+      const old = start();
+      if (i - 1 === 0) { delete a.depthFix; delete a.progHost; } else delete a.depthOutFix; // wpis rzędnej znosi stałe zagłębienie i próg włączenia
+      // pierwszy węzeł ze studnią włączeniową / progiem: Rz. pocz. = dno włączenia (prawa strona), dno studni bez zmian
+      if (i - 1 === 0 && (a.hostWell || has(a.invOut)) && has(a.inv)) { a.invOut = Math.abs(v - a.inv) > 0.0005 ? r3(v) : null; a.invOutFix = true; }
+      else if (i - 1 === 0) { a.inv = r3(v); a.invFix = true; } else { a.invOut = Math.abs(v - a.inv) > 0.0005 ? r3(v) : null; a.invOutFix = true; }
+      if (has(old)) shiftFrom(i, start() - old);
+    } else if (field === 'slope') {
+      delete b.sConst;
+      if (v === null) { b.slopeSet = null; return null; }
+      b.slopeSet = v;
+      if (has(start()) && L > 0) { const ne = r3(start() + v / 100 * L), d = has(b.inv) ? ne - b.inv : 0; if (!has(b.inv)) b.inv = ne; else shiftFrom(i, d); b.invFix = true; }
+    } else if (field === 'i1') {
+      if (v === null) return 'Wpisz rzędną końcową.';
+      delete b.depthFix;
+      const d = has(b.inv) ? v - b.inv : 0;
+      if (!has(b.inv)) b.inv = r3(v); else shiftFrom(i, d);
+      b.inv = r3(v); b.invFix = true; b.slopeSet = null;
+    }
+    PS.model.constChains(profile);
+    return null;
+  },
+  /* Geometria trasy w tabeli TRASA (PK: Odl, Zał. [°], X, Y; opcja „Liniowe przesunięcie trasy”, filmy 35, 36, 79).
+     Odl – odległość od poprzedniego węzła: węzeł przesuwa się wzdłuż kierunku odcinka (bez X/Y – zmienia się Mb);
+     Zał. – załamanie w węźle [°, + w lewo]: dalsza część trasy obraca się wokół węzła; X/Y – nowe położenie.
+     linear = true: dalsze węzły przesuwają się o ten sam wektor (odległości między nimi bez zmian). */
+  editRoute(profile, id, field, value, linear) {
+    const ns = PS.model.nodesOf(profile), i = ns.findIndex(n => n.id === id), n = ns[i];
+    if (i < 0) return 'Brak węzła.';
+    const xy = q => has(q.x) && has(q.y), allXY = ns.every(xy), v = PS.util.num(value);
+    if (v === null) return `Niepoprawna liczba: „${value}”`;
+    const r3 = x => Math.round(x * 1000) / 1000;
+    const after = ns.slice(i + 1), others = [...profile.points.filter(q => q.kind !== 'node'), ...(profile.crossings || []), ...(profile.elements || []), ...(profile.boreholes || [])];
+    if (field === 'odl') {
+      if (i === 0) return 'Pierwszy węzeł nie ma odległości od poprzedniego – zmień jego Mb.';
+      const p = ns[i - 1];
+      if (!(v > 0)) return 'Odległość musi być większa od 0.';
+      if (allXY) {
+        const L = Math.hypot(n.x - p.x, n.y - p.y) || 1, ux = (n.x - p.x) / L, uy = (n.y - p.y) / L;
+        const nx = p.x + ux * v, ny = p.y + uy * v, dx = nx - n.x, dy = ny - n.y;
+        n.x = nx; n.y = ny;
+        if (linear) for (const q of after) { q.x += dx; q.y += dy; }
+        PS.model.recomputeChainage(profile);
+      } else {
+        const d = p.dist + v - n.dist;
+        if (!linear && after.length && p.dist + v >= after[0].dist) return `Bez liniowego przesunięcia węzeł nie może przejść za ${after[0].name}.`;
+        n.dist = r3(n.dist + d);
+        if (linear) { for (const q of after) q.dist = r3(q.dist + d); for (const o of others) if (o.dist > n.dist - d + 1e-6) o.dist = r3(o.dist + d); }
+        PS.model.normalize(profile);
+      }
+    } else if (field === 'zal') {
+      if (!allXY) return 'Załamanie wymaga współrzędnych X/Y węzłów.';
+      if (i === 0 || i === ns.length - 1) return 'Załamanie dotyczy węzła z odcinkiem przed i za nim.';
+      const p = ns[i - 1], q = ns[i + 1];
+      const a1 = Math.atan2(n.y - p.y, n.x - p.x), a2 = Math.atan2(q.y - n.y, q.x - n.x);
+      let cur = (a2 - a1) * 180 / Math.PI; while (cur > 180) cur -= 360; while (cur <= -180) cur += 360;
+      const rot = (v - cur) * Math.PI / 180, c = Math.cos(rot), s = Math.sin(rot);
+      for (const t of after) { const dx = t.x - n.x, dy = t.y - n.y; t.x = n.x + dx * c - dy * s; t.y = n.y + dx * s + dy * c; }
+      PS.model.recomputeChainage(profile);
+    } else if (field === 'x' || field === 'y') {
+      const old = n[field];
+      n[field] = v;
+      if (linear && has(old)) for (const t of after) if (has(t[field])) t[field] += v - old;
+      if (allXY) PS.model.recomputeChainage(profile);
+    }
+    return null;
+  },
+
+  // ciągi odcinków oznaczonych „S” (sConst): jeden spadek od początku pierwszego do końca ostatniego odcinka ciągu
+  constChains(profile) {
+    const ns = PS.model.nodesOf(profile);
+    for (let i = 1; i < ns.length; i++) {
+      if (!ns[i].sConst) continue;
+      let e = i; while (e + 1 < ns.length && ns[e + 1].sConst) e++;
+      const s = i - 1, z0 = ns[s].invOut ?? ns[s].inv, z1 = ns[e].inv, Lt = ns[e].dist - ns[s].dist;
+      if (has(z0) && has(z1) && Lt > 0) for (let k = s + 1; k < e; k++) {
+        ns[k].inv = Math.round((z0 + (z1 - z0) * (ns[k].dist - ns[s].dist) / Lt) * 1000) / 1000;
+        if (!ns[k].invOutFix) ns[k].invOut = null;
+      }
+      i = e;
+    }
+  },
+
+  // przesunięcie całego kilometrażu profilu o d [m] (punkty, uzbrojenie, elementy, odwierty)
+  shiftChainage(f, d) {
+    if (!d) return;
+    const r = v => Math.round((v + d) * 1000) / 1000;
+    for (const q of f.points) q.dist = r(q.dist);
+    for (const c of [...(f.crossings || []), ...(f.elements || []), ...(f.boreholes || [])]) c.dist = r(c.dist);
+    for (const e of f.elements || []) if (has(e.dist2)) e.dist2 = r(e.dist2);
+  },
+  // odgałęzienia profilu f rekurencyjnie (profile włączone do f, do nich itd.)
+  descendants(project, f) {
+    const out = [], todo = [f];
+    while (todo.length) {
+      const g = todo.pop();
+      for (const h of project.profiles) if (h !== f && !out.includes(h)) { const host = PS.model.hostOf(project, h); if (host && host.f === g) { out.push(h); todo.push(h); } }
+    }
+    return out;
+  },
+
+  /* ---------- operacje na profilach (Lista profili w PK) */
+  // kopia profilu z nowymi identyfikatorami punktów i obiektów
+  copyProfile(f, name) {
+    const c = JSON.parse(JSON.stringify(f));
+    c.id = PS.util.uid(); c.name = name || `${f.name} (kopia)`;
+    for (const k of ['points', 'crossings', 'elements', 'boreholes']) (c[k] || []).forEach(q => { q.id = PS.util.uid(); });
+    return c;
+  },
+  /* Odwrócenie trasy profilu (Odwróć trasę profilu w PK): Mb od drugiego końca, dno odcinka „wyl.” zamienione z „wl.”,
+     wymiar i materiał odcinka przeniesione na nowy węzeł końcowy odcinka, spadek zadany ze zmienionym znakiem. */
+  reverseProfile(f) {
+    const pts = f.points.slice().sort((a, b) => a.dist - b.dist);
+    if (pts.length < 2) return false;
+    const d0 = pts[0].dist, d1 = pts[pts.length - 1].dist, mir = d => Math.round((d0 + d1 - d) * 1000) / 1000;
+    const nodes = pts.filter(q => q.kind === 'node');
+    const seg = nodes.map(n => ({ dn: n.pipeDn ?? null, mat: n.pipeMat || '', slope: n.slopeSet ?? null }));
+    nodes.forEach((n, i) => {
+      // odcinek (n_i → n_i+1) w nowej kolejności kończy się w n_i: dane z dawnego węzła n_i+1
+      const s = seg[i + 1] || { dn: null, mat: '', slope: null };
+      n.pipeDn = s.dn; n.pipeMat = s.mat; n.slopeSet = has(s.slope) ? -s.slope : null;
+      if (has(n.invOut)) { const a = n.inv, fa = n.invFix; n.inv = n.invOut; n.invFix = n.invOutFix; n.invOut = a; n.invOutFix = fa; }
+    });
+    for (const q of pts) q.dist = mir(q.dist);
+    for (const c of f.crossings || []) c.dist = mir(c.dist);
+    for (const b of f.boreholes || []) b.dist = mir(b.dist);
+    for (const e of f.elements || []) {
+      if (e.kind === 'casing' && e.length) e.dist = Math.round((mir(e.dist) - e.length) * 1000) / 1000; else e.dist = mir(e.dist);
+      if (has(e.dist2)) e.dist2 = mir(e.dist2);
+    }
+    PS.model.normalize(f);
+    return true;
+  },
+  /* Zmiana punktu włączenia (Zmień wylot w PK): pierwszy węzeł profilu przejmuje nazwę i położenie węzła o podanej
+     nazwie z innego profilu projektu; kilometraż przeliczany z X/Y, gdy są współrzędne. */
+  reattachProfile(project, f, nodeName) {
+    const host = project.profiles.filter(g => g !== f).flatMap(g => PS.model.nodesOf(g).map(n => ({ g, n }))).find(h => h.n.name === nodeName);
+    const n0 = PS.model.nodesOf(f)[0];
+    if (!host || !n0) return null;
+    Object.assign(n0, { name: host.n.name, x: host.n.x, y: host.n.y, ti: host.n.ti ?? n0.ti, tp: host.n.tp ?? n0.tp });
+    f.parent = host.g.name; f.attach = host.n.name;
+    if (has(n0.x) && has(n0.y)) PS.model.recomputeChainage(f);
+    return host;
+  },
+  /* Stały spadek między odległymi punktami (S w PK): między kolejnymi węzłami o rzędnej stałej (wpisanej ręcznie)
+     rzędne dna węzłów pośrednich z interpolacji liniowej po kilometrażu – jeden spadek na całym odcinku. */
+  constantSlope(profile) {
+    const ns = PS.model.nodesOf(profile);
+    const fixed = ns.map((n, i) => (n.invFix && has(n.inv) ? i : -1)).filter(i => i >= 0);
+    let changed = 0;
+    for (let k = 1; k < fixed.length; k++) {
+      const ia = fixed[k - 1], ib = fixed[k], a = ns[ia], b = ns[ib];
+      if (ib - ia < 2) continue;
+      const z0 = a.invOut ?? a.inv, z1 = b.inv, L = b.dist - a.dist;
+      if (!(L > 0)) continue;
+      for (let i = ia + 1; i < ib; i++) {
+        // do mm – przy zaokrągleniu do cm spadki pośrednie różniłyby się o kilka setnych procenta
+        const n = ns[i], v = Math.round((z0 + (z1 - z0) * (n.dist - a.dist) / L) * 1000) / 1000;
+        if (n.inv !== v || has(n.invOut)) changed++;
+        n.inv = v; if (!n.invOutFix) n.invOut = null;
+      }
+    }
+    return changed;
+  },
+
+  /* Uzbrojenie z warstw mapy DXF (Import uzbrojenia w PK): przecięcia tras profili z liniami warstw, którym w panelu
+     Mapa DXF nadano rolę „uzbrojenie: typ”; wymiar i zagłębienie osi z wartości domyślnych typu. Zastępuje wcześniejszy
+     import z mapy (src: 'map'), wpisane ręcznie skrzyżowania zostają. */
+  crossingsFromMap(project, profiles, map) {
+    const roles = project.mapRoles || {}, layers = Object.keys(roles).filter(l => /^u:/.test(roles[l]));
+    const lines = map.lines.filter(L => !L.point && layers.includes(L.l));
+    let count = 0;
+    for (const f of profiles) {
+      const ns = PS.model.nodesOf(f).filter(n => has(n.x) && has(n.y)), found = [];
+      for (let i = 1; i < ns.length; i++) {
+        const a = ns[i - 1], b = ns[i];
+        const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+        for (const L of lines) {
+          const p = L.pts, type = roles[L.l].slice(2), def = PS.utilDefault(project, type);
+          for (let j = 0; j + 3 < p.length; j += 2) {
+            const qx = p[j], qy = p[j + 1], rx = p[j + 2], ry = p[j + 3];
+            if (Math.max(qx, rx) < x0 || Math.min(qx, rx) > x1 || Math.max(qy, ry) < y0 || Math.min(qy, ry) > y1) continue;
+            const d1x = b.x - a.x, d1y = b.y - a.y, d2x = rx - qx, d2y = ry - qy, den = d1x * d2y - d1y * d2x;
+            if (Math.abs(den) < 1e-12) continue;
+            const ex = qx - a.x, ey = qy - a.y, u = (ex * d2y - ey * d2x) / den, v = (ex * d1y - ey * d1x) / den;
+            if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+            const dist = Math.round((a.dist + u * (b.dist - a.dist)) * 100) / 100;
+            // ta sama linia przecięta dwa razy w tym samym miejscu (sąsiednie odcinki trasy) – raz
+            if (found.some(c => c.ref === `mapa: ${L.l}` && Math.abs(c.dist - dist) < 0.05)) continue;
+            found.push(PS.model.newCrossing({ dist, status: 'Istn.', type, dn: def.dn, depth: def.depth, ref: `mapa: ${L.l}`, x: a.x + u * d1x, y: a.y + u * d1y, src: 'map' }));
+          }
+        }
+      }
+      f.crossings = (f.crossings || []).filter(c => c.src !== 'map').concat(found);
+      count += found.length;
+    }
+    return count;
+  },
+
+  /* Porządkuje punkty wg kilometrażu (po edycji w tabeli). */
+  normalize(profile) {
+    profile.points.sort((a, b) => (a.dist ?? 0) - (b.dist ?? 0));
+  },
+};
+</script>
+<script>/* Profil Sieci – arkusz profilu jako lista prymitywów w mm wydruku (oś Y w górę, jak w DXF).
+   Ten sam zestaw prymitywów zapisują: toSVG (ekran, druk) i toDXF (Generator CAD). */
+window.PS = window.PS || {};
+
+PS.LAYERS = {
+  Teren_proj: { aci: 2, css: '--terrain-design', fb: '#a89200' },
+  Teren_istn: { aci: 3, css: '--terrain-existing', fb: '#00a000', lt: 'HIDDEN' },
+  Wezly: { aci: 7 }, Odcinki: { aci: 7 }, Podsypki: { aci: 7 }, Osie: { aci: 7, lt: 'CENTER' },
+  Linie_tabeli: { aci: 7 }, Liczby: { aci: 7 }, Opis_PZ: { aci: 7 }, Opis_wl: { aci: 7 },
+  Uzbr_podz: { aci: 7 }, Uzbr_nadz: { aci: 7 }, Armatura: { aci: 7 }, Opis_Arm: { aci: 7 }, Rury_ochr: { aci: 7 }, Linie_odn: { aci: 7 },
+  Opis_skrz: { aci: 1, css: '--layer-1', fb: '#d00000' }, Teksty: { aci: 7 }, Wymiary: { aci: 7 },
+  warstwa_nr_0: { aci: 8, css: '--layer-8', fb: '#6e6e6e' },
+  Ramka: { aci: 7 }, Tabelka: { aci: 7 }, Logo: { aci: 7 }, Zmiana_PP: { aci: 5, css: '--layer-5', fb: '#0000d0' },
+  Geologia: { aci: 30, css: '--geo', fb: '#8a5a2b' }, Geol_warstwy: { aci: 30, css: '--geo', fb: '#8a5a2b', lt: 'DASHED' },
+  Woda_grunt: { aci: 5, css: '--layer-5', fb: '#0000d0' }, Geol_kresk: { aci: 30, css: '--geo', fb: '#8a5a2b' }, Schemat: { aci: 7 },
+  // plan sytuacyjny (Generator – rzutnia Plan): sieci wg rodzaju, węzły, opisy
+  Plan_kan_d: { aci: 30 }, Plan_kan_s: { aci: 34 }, Plan_kan: { aci: 32 }, Plan_wod: { aci: 5 }, Plan_gaz: { aci: 2 }, Plan_co: { aci: 6 },
+  Plan_wezly: { aci: 7 }, Plan_opisy: { aci: 7 }, Plan_kierunek: { aci: 7 }, Plan_obiekty: { aci: 1, css: '--layer-1', fb: '#d00000' },
+};
+// opisy warstw w edytorze (Konfiguracja › Warstwy)
+PS.LAYER_DESC = {
+  Teren_proj: 'teren projektowany', Teren_istn: 'teren istniejący', Wezly: 'studnie i węzły', Odcinki: 'rura / kanał', Podsypki: 'podsypka i obsypka',
+  Osie: 'osie studni i kanału', Linie_tabeli: 'linie i nagłówki tabeli', Liczby: 'wartości w tabeli', Opis_PZ: 'opisy pionowe węzłów', Opis_wl: 'opisy włączeń',
+  Uzbr_podz: 'uzbrojenie podziemne', Uzbr_nadz: 'uzbrojenie naziemne', Armatura: 'armatura', Opis_Arm: 'opisy armatury', Rury_ochr: 'rury ochronne',
+  Linie_odn: 'linie odnośników', Opis_skrz: 'opisy skrzyżowań, kolizje', Teksty: 'teksty i odnośniki', Wymiary: 'wymiary', warstwa_nr_0: 'obwiednia rysunku',
+  Ramka: 'ramka arkusza', Tabelka: 'tabelka rysunkowa', Logo: 'logo', Zmiana_PP: 'zmiana poziomu porównawczego', Geologia: 'odwierty', Geol_warstwy: 'warstwy geologiczne',
+  Woda_grunt: 'woda gruntowa', Geol_kresk: 'kreskowanie gruntów', Schemat: 'schemat sieci pod tabelą', Plan_obiekty: 'plan: skrzyżowania ⊗, rury ochronne, odwierty',
+};
+PS.WIDTH = { hair: 0.13, thin: 0.25, mid: 0.35, tp: 0.45, thick: 0.6, pp: 0.7 };
+PS.DASH = { HIDDEN: '3 1.5', CENTER: '8 1.5 1.5 1.5', DASHED: '5 2.5', DASHDOT: '5 1.5 0.5 1.5' };
+
+PS.render = {
+  HEADER_W: 84, FIRST_STATION: 20,
+  VALUE_ROWS: new Set(['teren_proj', 'teren_istn', 'dno', 'os', 'strop', 'dno_wykopu', 'zagl_strop', 'zagl_os', 'zagl_dno', 'zagl_wykop', 'wsp_x', 'wsp_y']),
+
+  /* Znaki PK w polu Opis (wykaz skrótów, poz. 162–166): „-” brak opisu, „&tekst” dołączony do opisu automatycznego,
+     „+tekst” dołączony bez wymiaru, „^” opis nad terenem, „!” opis zawsze nad tabelą. Zwraca { text, mode, above, keep }. */
+  descMarks(desc) {
+    let s = String(desc || '').trim(), above = false, keep = false;
+    if (s[0] === '^') { above = true; s = s.slice(1).trim(); } else if (s[0] === '!') { keep = true; s = s.slice(1).trim(); }
+    if (s === '-') return { text: '', mode: 'none', above, keep };
+    if (s[0] === '&') return { text: s.slice(1).trim(), mode: 'append', above, keep };
+    if (s[0] === '+') return { text: s.slice(1).trim(), mode: 'appendNoDim', above, keep };
+    return { text: s, mode: 'plain', above, keep };
+  },
+  nodeLabel(n, c) {
+    const m = PS.render.descMarks(n.desc);
+    if (m.mode === 'none') return '';
+    let s;
+    const auto = (dim = true) => [n.type, dim && n.dn && PS.WELL_TYPES.has(n.type) ? `⌀${PS.util.m(n.dn)}m` : ''].filter(Boolean).join(' ');
+    if (m.mode === 'append') s = [auto(), m.text].filter(Boolean).join(' ');
+    else if (m.mode === 'appendNoDim') s = [auto(false), m.text].filter(Boolean).join(' ');
+    else if (m.text && (/⌀/.test(m.text) || !n.type || m.text.toLowerCase().startsWith(n.type.toLowerCase()))) s = m.text;
+    else {
+      s = [n.type, m.text].filter(Boolean).join(' ');
+      if (n.dn && PS.WELL_TYPES.has(n.type)) s += ` ⌀${PS.util.m(n.dn)}m`;
+    }
+    if (c && c.drop) s += `, Rz.d.=${PS.util.fix(c.invOut, 2)}`;
+    return s;
+  },
+  // WIELKIE LITERY dla grupy uzbrojenia (Opcje › Opisy, film 95): wszystkie albo wybrane rodzaje sieci
+  upperFor(OP, c, k) {
+    if (OP.upperCross) return true;
+    const g = k && (k.kind === 'surface' || k.kind === 'aerial') ? 'nadz' : k && k.kind === 'inlet' ? 'wl'
+      : ({ 'Kan.': 'kan', 'Wod.': 'wod', 'Gaz.': 'gaz', 'S.Cieplna': 'co', 'Kabel': 'kab', 'Kan. tech.': 'kab' })[c.type] || 'inne';
+    return !!OP['up_' + g];
+  },
+  // nazwa PZ ze znakami PK: „.” bez oznaczenia pod tabelą, „|” oznaczenie pionowe, „#” pominięcie na planie
+  pzMarks(name) {
+    const s = String(name || '');
+    const m = s.match(/^[.|#^]+/), pre = m ? m[0] : '';
+    return { name: s.slice(pre.length), hideTable: pre.includes('.'), vertical: pre.includes('|'), hidePlan: pre.includes('#') };
+  },
+
+  build(project, profile, calc, opt = {}) {
+    const U = PS.util, R = PS.render;
+    project = PS.model.eff(project, profile);
+    const P = [];
+    const line = (l, x1, y1, x2, y2, w = 'thin', lt) => P.push({ t: 'line', l, x1, y1, x2, y2, w, lt });
+    const pline = (l, pts, w = 'thin', lt, closed = false) => { if (pts.length > 1) P.push({ t: 'pline', l, pts, w, lt, closed }); };
+    const rect = (l, x, y, w, h, lw = 'mid') => P.push({ t: 'rect', l, x, y, w, h, lw });
+    const text = (l, x, y, h, s, rot = 0, al = 'l') => { if (s !== '' && s !== null && s !== undefined) P.push({ t: 'text', l, x, y, h, s: String(s), rot, al }); };
+    // opcje rysunku (Konfiguracja › Opcje, Tabela › Szczegóły) i słownik PL/EN dla opisów pionowych
+    const OPT = PS.optOf(project), OP = OPT.profile, OT = OPT.table;
+    const lab = (s, upper) => { const t = PS.dict.apply(project, s); return upper && t ? String(t).toUpperCase() : t; };
+    const slopeTxt = v => {
+      if (!OT.permille) return U.pct(v, OT.slopeDec);
+      const s = Math.abs(v * 10).toFixed(OT.slopeDec).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+      return (s || '0') + '‰';
+    };
+
+    const hS = 1000 / project.scaleH, vS = 1000 / project.scaleV;
+    // opt.noHead – odgałęzienie rysowane obok profilu głównego: bez przedniej tabelki (nazw wierszy), jak w PK
+    const noHead = !!opt.noHead, noEn = !!OT.noEn;
+    const HW = noHead ? 0 : R.HEADER_W, X0 = HW + (noHead ? 6 : R.FIRST_STATION);
+    // opt.d0/d1 – zakres kilometrażu jednego arkusza; opt.pp – poziom porównawczy arkusza
+    const ranged = opt.d0 !== undefined;
+    const d0 = ranged ? opt.d0 : 0, d1 = ranged ? opt.d1 : calc.length;
+    const inR = d => !ranged || ((d ?? 0) >= d0 - 1e-6 && (d ?? 0) <= d1 + 1e-6);
+    const { nodeCalc } = calc;
+    const pts = calc.pts.filter(p => inR(p.dist)), nodes = calc.nodes.filter(n => inR(n.dist));
+    const lerp = (s, d) => s.L > 0 ? s.i0 + (s.i1 - s.i0) * (d - s.a.dist) / s.L : s.i0;
+    const segs = [];
+    for (const s of calc.segs) {
+      if (s.b.dist < d0 - 1e-6 || s.a.dist > d1 + 1e-6) continue;
+      if (inR(s.a.dist) && inR(s.b.dist)) { segs.push(s); continue; }
+      // odcinek dłuższy niż arkusz: przycięty do granicy arkusza
+      const da = Math.max(s.a.dist, d0), db = Math.min(s.b.dist, d1);
+      if (db - da < 1e-6) continue;
+      segs.push({ ...s, a: { ...s.a, dist: da }, b: { ...s.b, dist: db }, i0: s.i0 !== null ? lerp(s, da) : null, i1: s.i1 !== null ? lerp(s, db) : null, partial: true });
+    }
+    const crosses = (calc.crosses || []).filter(k => inR(k.c.dist));
+    const pp = opt.pp ?? calc.pp, length = d1;
+    const xOf = d => X0 + ((d ?? 0) - d0) * hS;
+    const rows = project.rows.map(r => ({ ...r, hmm: (r.h || 1) * 10 }));
+    const yTop = rows.reduce((s, r) => s + r.hmm, 0);
+    const yOf = e => yTop + (e - pp) * vS;
+    const xEnd = xOf(length) + 10;
+    // wysokości tekstów tabeli [mm] – z szablonu PK (Konfiguracja › Teksty) albo domyślne
+    const TH = Object.assign({ header: 4, value: 2, material: 4 }, project.textH || {});
+    // odcinki o wspólnym PP (zmiana poziomu porównawczego w obrębie arkusza); węzeł na granicy rysowany na nowym poziomie
+    const ppSegs = opt.ppSegs && opt.ppSegs.length ? opt.ppSegs : PS.model.manualPP(calc, d0, d1, pp) || [{ a: d0, b: d1, pp }];
+    const ppAt = (d, side = 'right') => {
+      const g = side === 'right'
+        ? ppSegs.find(q => d >= q.a - 1e-6 && d < q.b - 1e-6) || ppSegs[ppSegs.length - 1]
+        : ppSegs.find(q => d > q.a + 1e-6 && d <= q.b + 1e-6) || ppSegs[0];
+      return g.pp;
+    };
+    const yAt = (e, p) => yTop + (e - p) * vS;
+
+    // --- tabela
+    if (!noHead) rect('Linie_tabeli', 0, -2, HW, yTop + 4, 'hair');
+    line('Linie_tabeli', 0, yTop, xEnd, yTop, OP.ppBold ? 'pp' : 'thin');
+    line('Linie_tabeli', HW, 0, HW, yTop, 'thin');
+    line('Linie_tabeli', xEnd, 0, xEnd, yTop, 'thin');
+    let top = yTop;
+    for (const r of rows) {
+      r.top = top; r.bot = top - r.hmm; top = r.bot;
+      line('Linie_tabeli', 0, r.bot, xEnd, r.bot, 'thin');
+      if (noHead) continue;
+      const lab = PS.model.rowLabel(project, r);
+      if (r.hmm >= 9 && lab.en && !noEn) {
+        const hh = Math.min(TH.header, r.hmm * 0.44);
+        text('Linie_tabeli', 2, r.top - 4.6, hh, lab.pl);
+        text('Linie_tabeli', 2, r.top - 9.4, hh, lab.en);
+      } else text('Linie_tabeli', 2, r.top - r.hmm / 2 - 1.25, Math.min(4, r.hmm * 0.4), lab.pl);
+    }
+    if (noHead) {
+      // odgałęzienie: tylko nazwa profilu i poziom porównawczy przy lewej krawędzi tabeli
+      if (!OP.noProfileName) text('Linie_tabeli', 0.6, yTop + 7, 2, profile.name);
+      text('Linie_tabeli', 0.6, yTop + 3, 2, `${U.fix(pp, 2)} m n.p.m.`);
+    } else {
+      if (!OP.noProfileName) text('Linie_tabeli', 2, yTop + 14, 2, 'OZNACZENIE PROFILU:');
+      text('Linie_tabeli', 2, yTop + 7, 2, 'POZIOM PORÓWNAWCZY');
+      if (!OP.noProfileName) text('Linie_tabeli', HW - 1, yTop + 7, 2, profile.name, 0, 'r');
+      if (!noEn) text('Linie_tabeli', 2, yTop + 3, 2, 'REFERENCE LEVEL');
+      text('Linie_tabeli', HW - 1, yTop + 3, 2, `${U.fix(pp, 2)} m n.p.m.`, 0, 'r');
+      text('Linie_tabeli', 1, -4.5, 1.2, 'Profil Sieci – generator rysunkowy');
+      text('Linie_tabeli', 1, -6.5, 1.2, `Projekt: ${project.name}   Profil: ${profile.name}${opt.sheetLabel ? '   ' + opt.sheetLabel : ''}`);
+    }
+
+    // krzyż skali
+    const sx = 22, sy = yTop + 46;
+    if (!noHead) {
+    line('Liczby', sx, sy, sx, sy + 24, 'hair'); pline('Liczby', [[sx - 1, sy + 21.5], [sx, sy + 24], [sx + 1, sy + 21.5]], 'hair');
+    line('Liczby', sx, sy, sx + 22, sy, 'hair'); pline('Liczby', [[sx + 19.5, sy + 1], [sx + 22, sy], [sx + 19.5, sy - 1]], 'hair');
+    text('Liczby', sx - 1.4, sy + 6, 2, `1:${project.scaleV}`, 90);
+    text('Liczby', sx + 6, sy - 4, 2, `1:${project.scaleH}`);
+    }
+
+    // --- teren
+    // teren w zakresie ra–rb (z wartościami na granicach), rysowany względem PP p
+    const series = (k, ra, rb, p) => {
+      const all = calc.pts.filter(q => q[k] !== null && q[k] !== undefined);
+      const at = d => {
+        for (let i = 1; i < all.length; i++) if (all[i].dist >= d) { const a = all[i - 1], b = all[i]; return b.dist > a.dist ? a[k] + (b[k] - a[k]) * (d - a.dist) / (b.dist - a.dist) : b[k]; }
+        return null;
+      };
+      const out = all.filter(q => (q.dist ?? 0) >= ra - 1e-6 && (q.dist ?? 0) <= rb + 1e-6).map(q => [q.dist, q[k]]);
+      if ((ranged || ppSegs.length > 1) && all.length > 1) {
+        if (!out.length || out[0][0] > ra + 1e-6) { const v = at(ra); if (v !== null) out.unshift([ra, v]); }
+        if (!out.length || out[out.length - 1][0] < rb - 1e-6) { const v = at(rb); if (v !== null) out.push([rb, v]); }
+      }
+      return { pts: out.map(([d, v]) => [xOf(d), yAt(v, p)]), first: out[0], last: out[out.length - 1] };
+    };
+    for (const g of ppSegs) {
+      pline('Teren_istn', series('ti', g.a, g.b, g.pp).pts, 'thin', 'HIDDEN');
+      pline('Teren_proj', series('tp', g.a, g.b, g.pp).pts, 'tp');
+    }
+    // zmiana poziomu porównawczego: pionowa linia skoku i opis (warstwa Zmiana_PP, ACI 5) – jak w generatorze PK
+    for (let i = 1; i < ppSegs.length; i++) {
+      const g0 = ppSegs[i - 1], g = ppSegs[i], x = xOf(g.a);
+      const t0 = series('tp', g0.a, g0.b, g0.pp).last ?? series('ti', g0.a, g0.b, g0.pp).last;
+      const t1 = series('tp', g.a, g.b, g.pp).first ?? series('ti', g.a, g.b, g.pp).first;
+      const yHi = Math.max(t0 ? yAt(t0[1], g0.pp) : yTop, t1 ? yAt(t1[1], g.pp) : yTop) + 3;
+      line('Zmiana_PP', x, yTop, x, yHi, 'thin');
+      text('Zmiana_PP', x + 2, yHi + 8.5, 2, 'Zmiana poziomu porównawczego');
+      text('Zmiana_PP', x + 2, yHi + 4.5, 2, `Nowy poziom : ${U.fix(g.pp, 2)} m n.p.m.`);
+      text('Zmiana_PP', x + 2, yHi + 0.5, 2, `New level : ${U.fix(g.pp, 2)}`);
+    }
+
+    // --- kanał / rurociąg, podsypka i obsypka
+    for (const s of segs) {
+      if (s.i0 === null || s.i1 === null) continue;
+      const p = ppAt((s.a.dist + s.b.dist) / 2), yOf = e => yAt(e, p);
+      const xa = xOf(s.a.dist), xb = xOf(s.b.dist), dn = s.dn || 0;
+      if (OP.singleLine) line('Odcinki', xa, yOf(s.i0 + dn / 2), xb, yOf(s.i1 + dn / 2), 'thick');
+      else {
+        line('Odcinki', xa, yOf(s.i0), xb, yOf(s.i1), 'thick');
+        line('Odcinki', xa, yOf(s.i0 + dn), xb, yOf(s.i1 + dn), 'thick');
+        if (OP.pipeAxis) line('Osie', xa, yOf(s.i0 + dn / 2), xb, yOf(s.i1 + dn / 2), 'hair', 'CENTER');
+      }
+      const trn = PS.model.trenchOf(project, s.b); // podsypka i obsypka odcinka (ODCINKI › Wykopy) albo globalne
+      line('Podsypki', xa, yOf(s.i0 - trn.bed), xb, yOf(s.i1 - trn.bed), 'hair');
+      line('Podsypki', xa, yOf(s.i0 + dn + trn.cover), xb, yOf(s.i1 + dn + trn.cover), 'hair');
+    }
+
+    // --- węzły, rzędne, opisy pionowe
+    let angNo = 0;
+    for (const n of nodes) {
+      const c = nodeCalc.get(n), x = xOf(n.dist);
+      const yOf = e => yAt(e, ppAt(n.dist, 'right'));
+      const invLo = [c.invIn, c.invOut].filter(v => v !== null);
+      const lo = invLo.length ? Math.min(...invLo) : null;
+      let yBottom = lo !== null ? yOf(lo) : yTop;
+      if (PS.WELL_TYPES.has(n.type) && lo !== null) {
+        const ww = Math.max(2.4, (n.dn || 1.2) * hS);
+        // Rz. d. (osadnik): rzędna dna studni albo ujemna – głębokość pod dnem kanału; Rz. g.: wierzch studni ponad terenem (film 121)
+        const sump = has(n.rzD) ? (n.rzD < 0 ? lo + n.rzD : Math.min(n.rzD, lo)) : null;
+        const yb = sump !== null ? yOf(sump) : yOf(lo) - 1;
+        // Rz. g.: mała wartość (np. 1,0) = wyniesienie studni nad teren (projektowany, a gdy go nie ma – istniejący), duża – rzędna bezwzględna
+        const top = PS.model.wellTop(n, c);
+        const yt = top !== null ? yOf(top) : yOf(Math.max(...invLo) + (c.dnIn || 0.2)) + 3;
+        rect('Wezly', x - ww / 2 - 0.5, yb - 1.6, ww + 1, 1.6);
+        if (yt - yb > 6) {
+          rect('Wezly', x - ww / 2, yb, ww, yt - 2.4 - yb);
+          rect('Wezly', x - ww * 0.4, yt - 2.4, ww * 0.8, 1.2);
+          rect('Wezly', x - ww * 0.22, yt - 1.2, ww * 0.44, 1.2);
+        } else rect('Wezly', x - ww / 2, yb, ww, Math.max(yt - yb, 2));
+        if (OP.wellAxis) line('Osie', x, yb - 2.5, x, yt + 2, 'hair', 'CENTER');
+        yBottom = yb - 1.6;
+        /* kotwa z rzędną (TRASA › Rz. g. / Rz. d. z przyrostkiem P / p / L / l): odnośnik od krawędzi studni, półka, rzędna nad (P, L)
+           albo pod (p, l) półką; przy wyniesieniu / obniżeniu (1.0, −1.0) – rzędna już przeliczona */
+        const anchor = (tag, yy, elev) => {
+          if (!tag || elev === null || elev === undefined) return;
+          const dir = tag.side === 'L' ? -1 : 1, x0 = x + dir * (ww / 2 + 0.5), len = 9, ty = yy + (tag.below ? -3 : 3);
+          line('Linie_odn', x0, yy, x0 + dir * 2, ty, 'hair');
+          line('Linie_odn', x0 + dir * 2, ty, x0 + dir * (2 + len), ty, 'hair');
+          text('Teksty', x0 + dir * 2 + (dir < 0 ? -len : 0) + 0.5, tag.below ? ty - 2.6 : ty + 0.6, 2, U.fix(elev, 2));
+        };
+        anchor(n.rzGTag, yt, top);
+        anchor(n.rzDTag, yb, sump !== null ? sump : lo);
+      } else if (n.type === 'Wylot' && lo !== null) {
+        line('Wezly', x, yOf(lo) - 1.5, x, yOf(lo + (c.dnOut || c.dnIn || 0.2)) + 1.5, 'mid');
+      } else if (n.type === 'Budynek' && lo !== null && c.terrain !== null) {
+        line('Wezly', x, yOf(lo), x, yOf(c.terrain) + 4, 'mid');
+      }
+      line('Liczby', x, yTop, x, yBottom, 'hair');
+      let ang = OP.angleText ? PS.model.angleText(calc.angles && calc.angles.get(n), OP.angleMode) : '';
+      if (ang && OP.angleNum) ang = `K${++angNo} ${ang}`;
+      const nm = R.descMarks(n.desc), nAbove = nm.above && c.terrain !== null;
+      const lx = OP.labelRight ? x + 0.6 + 2 : x - 0.6; // Opcje › Opisy: opis za linią (po prawej)
+      text('Opis_PZ', lx, nAbove ? yOf(c.terrain) + 3 : yTop + 1, 2, lab([R.nodeLabel(n, c), ang ? `załam. ${ang}` : ''].filter(Boolean).join(', '), OP.upperNodes), 90);
+    }
+
+    // --- uzbrojenie obce / skrzyżowania: przekrój (elipsa – różne skale), oś uzbrojenia, opis pionowy, kolizja
+    for (const k of crosses) {
+      const c = k.c, x = xOf(c.dist);
+      const yOf = e => yAt(e, ppAt(c.dist, 'right'));
+      if (k.kind === 'inlet') {
+        // włączenie: opis po prawej stronie rzędnej węzła (warstwa Opis_wl), jak w generatorze PK
+        text('Opis_wl', x + 2.4, yTop + 1, 2, lab(PS.model.crossingLabel(c, k), R.upperFor(OP, c, k)), 90);
+        // przekrój: na profilu głównym – rura odgałęzienia w studni (dno = Rz.d. włączenia),
+        // na profilu odgałęzienia – kolektor, do którego się włącza (dno kolektora w węźle włączenia)
+        const e0 = c.host ? c.hostInv : k.elev, dn = c.dn || 0.2;
+        if (e0 !== null && e0 !== undefined) {
+          const cy = yOf(e0 + dn / 2), rx = Math.max(0.5, dn * hS / 2), ry = Math.max(0.7, dn * vS / 2), ell = [];
+          for (let i = 0; i < 24; i++) { const a = i / 24 * 2 * Math.PI; ell.push([x + rx * Math.cos(a), cy + ry * Math.sin(a)]); }
+          pline('Wezly', ell, c.host ? 'mid' : 'thin', undefined, true);
+          if (c.host) {
+            // kolektor: oś i podpis z rzędną dna obok przekroju
+            line('Osie', x - rx - 1.2, cy, x + rx + 1.2, cy, 'hair', 'CENTER');
+            text('Teksty', x + rx + 0.8, cy - ry - 2.6, 1.8, `${c.sub.replace(/^do kanału\s*/, 'kolektor ')} ⌀${U.m(dn)}, Rz.d.=${U.fix(e0, 2)}`);
+          }
+        }
+        continue;
+      }
+      if (k.kind === 'surface') {
+        if (k.terrain !== null) line('Uzbr_nadz', x, yOf(k.terrain), x, yOf(k.terrain) + 3, 'thin');
+      } else if (k.kind === 'aerial') {
+        // linia napowietrzna: przewód nad terenem, przerywana linia do terenu
+        if (k.elev !== null) {
+          const cy = yOf(k.elev);
+          P.push({ t: 'circle', l: 'Uzbr_nadz', cx: x, cy, r: 0.8, w: 'mid' });
+          if (k.terrain !== null) line('Uzbr_nadz', x, yOf(k.terrain), x, cy - 0.8, 'hair', 'DASHED');
+          line('Uzbr_podz', x, yTop, x, k.terrain !== null ? yOf(k.terrain) : cy - 0.8, 'hair', 'CENTER');
+        }
+      } else if (k.elev !== null) {
+        const dn = c.dn || 0.1, dh = c.dnH || dn;
+        const cy = yOf(k.elev + dh / 2), rx = Math.max(0.5, dn * hS / 2), ry = Math.max(0.7, dh * vS / 2);
+        if (c.dnH) rect('Uzbr_podz', x - rx, cy - ry, rx * 2, ry * 2, k.kind === 'cable' ? 'mid' : 'thin'); // przekrój prostokątny
+        else {
+          const ell = [];
+          for (let i = 0; i < 24; i++) { const a = i / 24 * 2 * Math.PI; ell.push([x + rx * Math.cos(a), cy + ry * Math.sin(a)]); }
+          pline('Uzbr_podz', ell, k.kind === 'cable' ? 'mid' : 'thin', undefined, true);
+          // wiązka (x12): drugi, większy obrys
+          if (c.mult) { const e2 = ell.map(([px, py]) => [x + (px - x) * 1.6, cy + (py - cy) * 1.6]); pline('Uzbr_podz', e2, 'hair', undefined, true); }
+        }
+        line('Uzbr_podz', x, yTop, x, cy - ry, 'hair', 'CENTER');
+        // odnośnik z rzędną (sufiks L/P w polu rzędnej, PK film 39): półka w lewo / w prawo z rzędną nad (P, L) albo pod (p, l) linią
+        if (c.tag) {
+          const dir = c.tag.side === 'L' ? -1 : 1, len = 8 * (c.tag.mult || 1), ty = cy + (c.tag.below ? -3 : 3);
+          line('Linie_odn', x + dir * rx, cy, x + dir * (rx + 2), ty, 'hair');
+          line('Linie_odn', x + dir * (rx + 2), ty, x + dir * (rx + 2 + len), ty, 'hair');
+          text('Teksty', x + dir * (rx + 2 + (dir < 0 ? len : 0)) + 0.4, ty + 0.6, 1.8, `${c.approx ? '~' : ''}${U.fix(k.elev, 2)}`);
+        }
+        if (k.clash) {
+          const cr = Math.max(rx, ry) + 1.5;
+          P.push({ t: 'circle', l: 'Opis_skrz', cx: x, cy, r: cr, w: 'mid' });
+          line('Opis_skrz', x - cr * 0.7, cy - cr * 0.7, x + cr * 0.7, cy + cr * 0.7, 'mid');
+          line('Opis_skrz', x - cr * 0.7, cy + cr * 0.7, x + cr * 0.7, cy - cr * 0.7, 'mid');
+        }
+      }
+      // opis pionowy: nad tabelą albo nad terenem („^” w opisie, opcja dla uzbrojenia naziemnego; „!” zatrzymuje nad tabelą)
+      const cm = R.descMarks(c.desc), nadz = k.kind === 'surface' || k.kind === 'aerial';
+      const cAbove = !cm.keep && (cm.above || (OP.aboveTerrainNadz && nadz)) && k.terrain !== null;
+      const cy0 = cAbove ? Math.max(yOf(k.terrain), k.kind === 'aerial' && k.elev !== null ? yOf(k.elev) + 1 : 0) + 3 : yTop + 1;
+      text('Opis_skrz', OP.labelRight ? x + 2.6 : x - 0.6, cy0, 2, lab(PS.model.crossingLabel(c, k), R.upperFor(OP, c, k)), 90);
+      // krzyżyk osi uzbrojenia z zagłębieniem osi „o.=…” (Opcje › Schemat, film 88)
+      if (OP.utilAxisMark && (k.kind === 'pipe' || k.kind === 'cable') && k.elev !== null) {
+        const hh = (c.dnH || c.dn || 0) / 2, ya = yOf(k.elev + hh);
+        line('Uzbr_podz', x - 1.2, ya, x + 1.2, ya, 'hair'); line('Uzbr_podz', x, ya - 1.2, x, ya + 1.2, 'hair');
+        if (k.terrain !== null) text('Teksty', x + 1.6, ya - 0.8, 1.6, `o.=${U.fix(k.terrain - k.elev - hh, 2)}`);
+      }
+    }
+
+    // --- armatura i elementy rysunkowe (tabela 4 PK: arm / elem)
+    // opis z podkreśleniem: tekst nad linią, cienki odnośnik od punktu do początku podkreślenia (wzór 25.PWN)
+    const leaderNote = (px, py, tx, ty, t1, t2) => {
+      const w = Math.max(t1.length, (t2 || '').length) * 1.25 + 2, dir = tx < px ? -1 : 1, xe = tx + dir * w;
+      line('Linie_odn', px, py, tx, ty, 'hair');
+      line('Linie_odn', tx, ty, xe, ty, 'hair');
+      const xl = Math.min(tx, xe) + 1;
+      text('Teksty', xl, ty + 0.8, 2, t1);
+      if (t2) text('Teksty', xl, ty - 2.8, 2, t2);
+    };
+    const ozn = PS.model.autoOzn(profile);
+    for (const k of calc.elems || []) {
+      const e = k.e;
+      if (!inR(e.dist) && !(e.kind === 'casing' && e.dist < d1 && e.dist + (e.length || 0) > d0)) continue;
+      const x = xOf(Math.max(e.dist, d0)), p = ppAt(e.dist, 'right'), yOf = v => yAt(v, p);
+      if (e.kind === 'arm') {
+        // armatura na osi rury – symbol wg typu (PS.armKind), opis pionowy nad tabelą
+        if (k.inv === null) continue;
+        const y = yOf(k.inv + (k.dn || 0) / 2), hw = 1.6, hh = Math.max(1.1, (k.dn || 0.1) * vS / 2 + 0.4);
+        const bow = () => pline('Armatura', [[x - hw, y - hh], [x + hw, y + hh], [x + hw, y - hh], [x - hw, y + hh]], 'mid', undefined, true);
+        const stem = (dir, len) => line('Armatura', x, y + dir * hh, x, y + dir * (hh + len), 'thin');
+        const tri = (yb, dir) => pline('Armatura', [[x - 1, yb], [x + 1, yb], [x, yb + dir * 1.6]], 'thin', undefined, true);
+        let yLow = y - hh;
+        switch (PS.armKind(e.type)) {
+          case 'hydrant': {
+            // hydrant nadziemny: trzon do terenu, kolumna nad terenem z głowicą
+            const yt = k.terrain !== null ? yOf(k.terrain) : y + hh + 6;
+            line('Armatura', x, y, x, yt + 4, 'mid');
+            rect('Armatura', x - 0.9, yt, 1.8, 4, 'thin');
+            P.push({ t: 'circle', l: 'Armatura', cx: x, cy: yt + 5, r: 1, w: 'thin' });
+            line('Armatura', x - 2, y, x + 2, y, 'mid'); yLow = y - 1;
+            break;
+          }
+          case 'air': stem(1, 2.5); tri(y + hh + 2.5, 1); bow(); break; // odpowietrznik: trzpień ze strzałką w górę
+          case 'drain': stem(-1, 2.5); tri(y - hh - 2.5, -1); bow(); yLow = y - hh - 4.1; break; // odwodnienie / spust
+          case 'check': bow(); line('Armatura', x, y - hh, x, y + hh, 'mid'); stem(1, 3); break; // zawór zwrotny
+          case 'butterfly': P.push({ t: 'circle', l: 'Armatura', cx: x, cy: y, r: hh, w: 'mid' }); line('Armatura', x - hh * 0.7, y - hh * 0.7, x + hh * 0.7, y + hh * 0.7, 'mid'); stem(1, 3); break;
+          case 'tee': line('Armatura', x - hw, y + hh, x + hw, y + hh, 'mid'); line('Armatura', x, y + hh, x, y + hh + 3, 'mid'); yLow = y; break; // trójnik
+          case 'reducer': pline('Armatura', [[x - hw, y - hh], [x + hw, y - hh * 0.55], [x + hw, y + hh * 0.55], [x - hw, y + hh]], 'mid', undefined, true); break;
+          case 'comp': rect('Armatura', x - hw, y - hh, hw * 2, hh * 2, 'mid'); for (const dx of [-0.6, 0, 0.6]) line('Armatura', x + dx, y - hh, x + dx, y + hh, 'thin'); break; // kompensator
+          default: bow(); stem(1, 3); line('Armatura', x - 1.2, y + hh + 3, x + 1.2, y + hh + 3, 'thin'); // zasuwa z kółkiem
+        }
+        line('Liczby', x, yTop, x, yLow, 'hair');
+        const oz = ozn.get(e) || (e.ozn !== 'auto' ? e.ozn : '');
+        text('Opis_Arm', OP.labelRight ? x + 2.6 : x - 0.6, yTop + 1, 2, lab([oz, e.type, e.text1].filter(Boolean).join(' '), OP.upperArm), 90);
+      } else if (e.kind === 'casing') {
+        // rura ochronna: linie CENTER nad i pod rurą na długości L, opis z odnośnikiem
+        if (k.inv === null) continue;
+        const a = Math.max(e.dist, d0), b = Math.min(e.dist + (e.length || 2), d1);
+        const pc = ppAt((a + b) / 2), yc = v => yAt(v, pc);
+        // rzeczywista średnica rury ochronnej (Dn), współosiowo z rurą przewodową
+        const cdn = PS.model.casingDn(e, k.dn), ax = k.inv + (k.dn || 0) / 2;
+        const lo = ax - cdn / 2, hi = ax + cdn / 2;
+        line('Rury_ochr', xOf(a), yc(lo), xOf(b), yc(lo), 'mid', 'CENTER');
+        line('Rury_ochr', xOf(a), yc(hi), xOf(b), yc(hi), 'mid', 'CENTER');
+        line('Rury_ochr', xOf(a), yc(lo), xOf(a), yc(hi), 'thin'); line('Rury_ochr', xOf(b), yc(lo), xOf(b), yc(hi), 'thin');
+        // odnośnik od spodu rury ochronnej; przesunięcie napisu jak w PK (pola 30/31, cm), domyślnie 8 mm w dół
+        const px = (xOf(a) + xOf(b)) / 2, py = yc(lo);
+        const cl = PS.model.casingLabel(e, k.dn, ozn.get(e) || e.ozn);
+        leaderNote(px, py, px + (e.dx || 0) * 10, py + (e.dy || -0.8) * 10, lab(cl, OP.upperArm), e.text2);
+      } else if (e.kind === 'dim') {
+        // wymiar: dwa punkty (Mb, rzędna); ten sam Mb – wymiar pionowy (różnica rzędnych, domyślnie do terenu), inaczej poziomy (odległość)
+        const ya = e.elev ?? k.terrain, d2 = e.dist2 ?? e.dist, yb0 = e.elev2 ?? (has(e.dist2) ? k.terrain2 : k.terrain) ?? ya;
+        if (ya === null || !inR(d2)) continue;
+        const vertical = Math.abs(d2 - e.dist) < 1e-6;
+        const ax = x, ay = yOf(ya), bx = xOf(d2), by = yOf(yb0);
+        const off = (e.dx || 0) * 10, offY = (e.dy || 0) * 10;
+        const tick = (tx, ty) => line('Wymiary', tx - 0.7, ty - 0.7, tx + 0.7, ty + 0.7, 'mid');
+        if (vertical) {
+          const lx = ax + (off || 4);
+          line('Wymiary', ax, ay, lx + 1, ay, 'hair'); line('Wymiary', ax, by, lx + 1, by, 'hair');
+          line('Wymiary', lx, ay, lx, by, 'thin'); tick(lx, ay); tick(lx, by);
+          text('Wymiary', lx - 0.8, (ay + by) / 2 - 2, 2, e.text1 || U.fix(Math.abs(yb0 - ya), 2), 90);
+        } else {
+          const ly = Math.max(ay, by) + (offY || 4);
+          line('Wymiary', ax, ay, ax, ly + 1, 'hair'); line('Wymiary', bx, by, bx, ly + 1, 'hair');
+          line('Wymiary', ax, ly, bx, ly, 'thin'); tick(ax, ly); tick(bx, ly);
+          text('Wymiary', (ax + bx) / 2, ly + 0.8, 2, e.text1 || `${U.fix(Math.abs(d2 - e.dist), 2)} m`, 0, 'c');
+        }
+        if (e.text2) text('Wymiary', vertical ? ax + (off || 4) + 1.5 : (ax + bx) / 2, vertical ? (ay + by) / 2 - 2 : Math.max(ay, by) + (offY || 4) - 2.8, 2, e.text2, vertical ? 90 : 0, vertical ? 'l' : 'c');
+      } else if (e.kind === 'vector') {
+        // wektor: strzałka od napisu (przesunięcie Δx/Δy) do punktu
+        const ref = e.elev ?? k.terrain;
+        if (ref === null) continue;
+        // domyślnie napis 8 mm nad punktem
+        const px = x, py = yOf(ref), tx = px + (e.dx || 0) * 10, ty = py + (e.dy ? e.dy * 10 : 8);
+        line('Linie_odn', tx, ty, px, py, 'thin');
+        const L = Math.hypot(px - tx, py - ty) || 1, ux = (px - tx) / L, uy = (py - ty) / L;
+        pline('Linie_odn', [[px - ux * 2.2 - uy * 0.7, py - uy * 2.2 + ux * 0.7], [px, py], [px - ux * 2.2 + uy * 0.7, py - uy * 2.2 - ux * 0.7]], 'thin', undefined, true);
+        text('Teksty', tx + (tx < px ? -1 : 1), ty + 0.6, 2, e.text1, 0, tx < px ? 'r' : 'l');
+        if (e.text2) text('Teksty', tx + (tx < px ? -1 : 1), ty - 3, 2, e.text2, 0, tx < px ? 'r' : 'l');
+      } else {
+        const ref = e.elev ?? k.terrain;
+        if (ref === null) continue;
+        const px = x, py = yOf(ref), tx = px + (e.dx || 0) * 10, ty = py + (e.dy || 0) * 10;
+        if (e.kind === 'leader') leaderNote(px, py, tx, ty, e.text1, e.text2);
+        else if (e.vertical) { text('Teksty', tx, ty, 2, e.text1, 90); if (e.text2) text('Teksty', tx + 2.8, ty, 2, e.text2, 90); }
+        else { text('Teksty', tx, ty, 2, e.text1); if (e.text2) text('Teksty', tx, ty - 2.8, 2, e.text2); }
+      }
+    }
+
+    // --- geologia (Dane › Geologia w PK): odwierty – słupek warstw z głębokościami spągów i opisem gruntu,
+    // zwierciadło wody gruntowej; warstwy – linie przerywane łączące spągi tego samego gruntu w sąsiednich odwiertach
+    const geo = project.geoShow || { bores: true, layers: true };
+    const bores = (calc.bores || []).filter(k => inR(k.b.dist) && k.top !== null);
+    const clipY = v => Math.max(yTop, v); // słupek przycięty do poziomu porównawczego
+    if (geo.bores !== false) for (const k of bores) {
+      const x = xOf(k.b.dist), p = ppAt(k.b.dist, 'right'), yOf = v => yAt(v, p), w = 2.4;
+      const yt = yOf(k.top);
+      text('Geologia', x, yt + 2, 2, k.b.name || 'Otw.', 0, 'c');
+      let prev = yt;
+      for (const l of k.layers) {
+        const yb = clipY(yOf(l.bottom));
+        if (yb < prev - 1e-6) { rect('Geologia', x - w / 2, yb, w, prev - yb, 'thin'); R.soilHatch(P, x - w / 2, yb, w, prev - yb, l.soil); }
+        if (yOf(l.bottom) >= yTop) text('Geologia', x - w / 2 - 0.8, yb - 0.6, 1.6, U.fix(l.to, 1), 0, 'r');
+        if (l.soil && prev - yb > 2.2) text('Geologia', x + w / 2 + 0.8, (prev + yb) / 2 - 0.8, 1.6, l.soil);
+        prev = yb;
+        if (yb <= yTop + 1e-6) break;
+      }
+      // zwierciadło nawiercone (trójkąt pusty, „ZWN”) i ustalone (trójkąt wypełniony kreską, „ZWG”) – film 131
+      const water = (lvl, label, filled) => {
+        if (lvl === null || yOf(lvl) <= yTop) return;
+        const yw = yOf(lvl);
+        pline('Woda_grunt', [[x + w / 2 + 0.2, yw], [x + w / 2 + 1.6, yw + 1.6], [x + w / 2 - 1.2, yw + 1.6]], 'thin', undefined, true);
+        if (filled) line('Woda_grunt', x + w / 2 - 0.6, yw + 0.8, x + w / 2 + 1.0, yw + 0.8, 'thin');
+        line('Woda_grunt', x - w / 2 - 2, yw, x + w / 2 + 3, yw, 'thin');
+        text('Woda_grunt', x + w / 2 + 2.2, yw + 0.4, 1.6, `${label} ${U.fix(lvl, 2)}`);
+      };
+      if (k.water2 !== null && k.water !== null && Math.abs(k.water2 - k.water) > 0.005) { water(k.water, 'ZWN', false); water(k.water2, 'ZWG', true); }
+      else water(k.water2 ?? k.water, 'ZWG', k.water2 !== null);
+      // spąg odwiertu: rzędna dna otworu pod słupkiem
+      if (k.layers.length && OP.boreBottom !== false) {
+        const lb = k.layers[k.layers.length - 1];
+        if (yOf(lb.bottom) > yTop + 2) text('Geologia', x, yOf(lb.bottom) - 2.6, 1.5, `${U.fix(lb.bottom, 2)}`, 0, 'c');
+      }
+    }
+    if (geo.layers !== false) for (let i = 1; i < bores.length; i++) {
+      const A = bores[i - 1], B = bores[i], used = new Set();
+      for (const la of A.layers) {
+        const lb = B.layers.find((q, j) => !used.has(j) && q.soil && q.soil.toLowerCase() === (la.soil || '').toLowerCase());
+        if (!lb) continue;
+        used.add(B.layers.indexOf(lb));
+        const ya = yAt(la.bottom, ppAt(A.b.dist, 'right')), yb = yAt(lb.bottom, ppAt(B.b.dist, 'left'));
+        if (ya < yTop || yb < yTop) continue;
+        line('Geol_warstwy', xOf(A.b.dist) + 1.2, ya, xOf(B.b.dist) - 1.2, yb, 'hair', 'DASHED');
+      }
+    }
+
+    // --- wiersze tabeli
+    const v2 = v => (v === null || v === undefined || !isFinite(v) ? '' : U.fix(v, OT.mm ? 3 : 2));
+    const vXY = v => (v === null || v === undefined || !isFinite(v) ? '' : U.fix(v, OT.coordDec));
+    // odległość w wierszu ODLEGŁOŚCI: Mb, kilometraż 0+123.45 albo od ostatniego hektometra
+    // metraż początkowy profilu (SIEĆ › Parametry, film 105) – przesuwa tylko opisy ODLEGŁOŚCI i HEKTOMETRY
+    const km0 = project.startKm || 0;
+    const distTxt = d0_ => {
+      const d = d0_ + km0;
+      if (OT.km) { const km = Math.floor(d / 1000 + 1e-9); return `${km}+${U.fix(d - km * 1000, OT.distDec).padStart(OT.distDec ? OT.distDec + 4 : 3, '0')}`; }
+      if (OT.fromHekto) return U.fix(d - Math.floor(d / 100 + 1e-9) * 100, OT.distDec);
+      return U.fix(d, OT.distDec);
+    };
+    for (const r of rows) {
+      const k = r.kind;
+      if (R.VALUE_ROWS.has(k) || k === 'spadki' || k === 'odleglosci') for (const n of nodes) line('Liczby', xOf(n.dist), r.top, xOf(n.dist), r.bot, 'hair');
+      if (R.VALUE_ROWS.has(k)) {
+        for (const n of nodes) {
+          const c = nodeCalc.get(n), x = xOf(n.dist), t = c.terrain;
+          const inv = c.invIn, out = c.invOut, dn = c.dnIn || 0, dnO = c.dnOut || dn;
+          let a = null, b = null;
+          switch (k) {
+            case 'teren_proj': a = n.tp; break;
+            case 'teren_istn': a = n.ti; break;
+            case 'dno': a = inv; b = out; break;
+            case 'os': a = inv !== null ? inv + dn / 2 : null; b = out !== null ? out + dnO / 2 : null; break;
+            case 'strop': a = inv !== null ? inv + dn : null; b = out !== null ? out + dnO : null; break;
+            case 'dno_wykopu': a = inv !== null ? inv - project.bedding : null; b = out !== null ? out - project.bedding : null; break;
+            case 'zagl_strop': a = c.zStrop; b = c.zStropOut; break;
+            case 'zagl_os': a = t !== null && inv !== null ? t - inv - dn / 2 : null; b = t !== null && out !== null ? t - out - dnO / 2 : null; break;
+            case 'zagl_dno': a = c.zDno; b = c.zDnoOut; break;
+            case 'zagl_wykop': a = c.zDno !== null ? c.zDno + project.bedding : null; b = c.zDnoOut !== null ? c.zDnoOut + project.bedding : null; break;
+            case 'wsp_x': a = n.x; break;
+            case 'wsp_y': a = n.y; break;
+          }
+          const fmt = k === 'wsp_x' || k === 'wsp_y' ? vXY : v2;
+          text('Liczby', x - 0.6, r.bot + 1.2, TH.value, fmt(a), 90);
+          if (c.drop && b !== null && Math.abs(b - a) > 0.005) text('Liczby', x + 0.4 + TH.value, r.bot + 1.2, TH.value, v2(b), 90);
+        }
+      } else if (k === 'spadki_tp' || k === 'spadki_ti') {
+        // spadek terenu między kolejnymi punktami terenu (węzły i punkty terenu)
+        const key = k === 'spadki_tp' ? 'tp' : 'ti';
+        const tps = pts.filter(q => q[key] !== null && q[key] !== undefined);
+        for (let i = 1; i < tps.length; i++) {
+          const a = tps[i - 1], b = tps[i], L = b.dist - a.dist;
+          if (L <= 0) continue;
+          const xa = xOf(a.dist), xb = xOf(b.dist);
+          line('Liczby', xa, r.top, xa, r.bot, 'hair');
+          if (xb - xa > 7) text('Liczby', (xa + xb) / 2, (r.top + r.bot) / 2 - TH.value / 2, TH.value, U.pct((b[key] - a[key]) / L * 100), 0, 'c');
+        }
+      } else if (k === 'spadki') {
+        // opcja: odcinki o tym samym (zaokrąglonym) spadku łączone w jeden opis
+        const groups = [];
+        for (const s of segs) {
+          if (s.slope === null) continue;
+          const g = groups[groups.length - 1];
+          if (OT.mergeSlopes && g && g.b === s.a && slopeTxt(g.slope) === slopeTxt(s.slope) && Math.sign(g.slope) === Math.sign(s.slope)) { g.b = s.b; g.L += s.L; }
+          else groups.push({ a: s.a, b: s.b, slope: s.slope, L: s.L });
+        }
+        const w = OT.boldSlope ? 'mid' : 'hair';
+        for (const s of groups) {
+          const xa = xOf(s.a.dist), xb = xOf(s.b.dist);
+          if (OT.mergeSlopes) { line('Liczby', xa, r.top, xa, r.bot, 'hair'); line('Liczby', xb, r.top, xb, r.bot, 'hair'); }
+          if (s.slope >= 0) line('Liczby', xa + 1, r.bot + 1, xb - 1, r.top - 1, w);
+          else line('Liczby', xa + 1, r.top - 1, xb - 1, r.bot + 1, w);
+          text('Liczby', xa + 1.5, r.top - 3.5, 2, slopeTxt(s.slope));
+          text('Liczby', xb - 1.5, r.bot + 1.5, 2, `${U.fix(s.L, 1)}m`, 0, 'r');
+        }
+      } else if (k === 'srednica') {
+        let g = null;
+        const flush = () => {
+          if (!g) return;
+          const xa = xOf(g.a.dist), xb = xOf(g.b.dist);
+          line('Liczby', xa, r.top, xa, r.bot, 'hair'); line('Liczby', xb, r.top, xb, r.bot, 'hair');
+          const h = Math.min(TH.material, r.hmm * 0.45);
+          text('Liczby', (xa + xb) / 2, (r.top + r.bot) / 2 - h / 2, h, `⌀${U.m(g.dn)}${g.mat ? ' ' + g.mat : ''} L=${U.fix(g.L, 1)}m`, 0, 'c');
+        };
+        for (const s of segs) {
+          if (g && g.dn === s.dn && g.mat === s.mat) { g.b = s.b; g.L += s.L; } else { flush(); g = { a: s.a, b: s.b, dn: s.dn, mat: s.mat, L: s.L }; }
+        }
+        flush();
+      } else if (k === 'odleglosci') {
+        for (const n of nodes) text('Liczby', xOf(n.dist) - 0.6, r.bot + 3.6, 2, distTxt(n.dist), 90);
+        for (const s of segs) if (!s.partial) text('Liczby', (xOf(s.a.dist) + xOf(s.b.dist)) / 2, r.bot + 1.5, 2, U.fix(s.L, 1), 0, 'c');
+      } else if (k === 'katy_poz' || k === 'katy_pion') {
+        for (const n of nodes) {
+          let s = '';
+          if (k === 'katy_poz') s = PS.model.angleText(calc.angles && calc.angles.get(n), OP.angleMode);
+          else {
+            const si = segs.find(q => q.b === n), so = segs.find(q => q.a === n);
+            if (si && so && si.slope !== null && so.slope !== null) {
+              const d = (Math.atan(so.slope / 100) - Math.atan(si.slope / 100)) * 180 / Math.PI;
+              if (Math.abs(d) >= 0.05) s = `${U.fix(d, 1)}°`;
+            }
+          }
+          line('Liczby', xOf(n.dist), r.top, xOf(n.dist), r.bot, 'hair');
+          if (s) text('Liczby', xOf(n.dist) - 0.6, r.bot + 1.2, TH.value, s, 90);
+        }
+      } else if (k === 'hektometry') {
+        // nazwa PZ pod tabelą: „.” – pominięta, „|” – pionowo
+        for (const n of nodes) {
+          const pm = R.pzMarks(n.name);
+          if (pm.hideTable) continue;
+          if (pm.vertical) text('Liczby', xOf(n.dist) - 0.6, r.bot + 1, 2, pm.name, 90);
+          else text('Liczby', xOf(n.dist), (r.top + r.bot) / 2 - 1, 2, pm.name, 0, 'c');
+        }
+        for (let hm = Math.ceil((d0 + km0) / 100 - 1e-9); hm * 100 - km0 <= length + 1e-6; hm++) {
+          const x = xOf(hm * 100 - km0);
+          line('Liczby', x, r.bot, x, r.bot + 1.5, 'hair');
+          P.push({ t: 'hekto', l: 'Liczby', x, y: r.bot - 2.5, r: 1.1 });
+          text('Liczby', x + 1.8, r.bot - 4.8, 2, String(hm));
+        }
+      }
+    }
+
+    // --- łańcuchy wymiarowe nad profilem (PK: opisowy łańcuch z tabeli WYKOPY – film 14, łańcuch odległości – film 89)
+    // położenie: wartość > PP = rzędna [m n.p.m.]; > 0 = cm nad tabelą; puste = 12 mm nad najwyższym terenem
+    {
+      let terrTop = yTop + 20;
+      for (const q of pts) for (const v of [q.tp, q.ti]) if (has(v)) terrTop = Math.max(terrTop, yAt(v, ppAt(q.dist)));
+      const posY = (v, def) => (has(v) && v > pp ? yAt(v, pp) : has(v) && v > 0 ? yTop + v * 10 : def);
+      const chain = (y, groups, layer) => {
+        for (const g of groups) {
+          const xa = xOf(g.a), xb = xOf(g.b);
+          line(layer, xa, y, xb, y, 'thin');
+          for (const x of [xa, xb]) { line(layer, x, y - 1.5, x, y + 1.5, 'hair'); line(layer, x - 0.7, y - 0.7, x + 0.7, y + 0.7, 'mid'); }
+          if (g.t1) text(layer, (xa + xb) / 2, y + 0.8, 2, g.t1, 0, 'c');
+          if (g.t2) text(layer, (xa + xb) / 2, y - 2.8, 2, g.t2, 0, 'c');
+        }
+      };
+      // opis wykopu 1/2 odcinka – sąsiednie odcinki o tym samym opisie łączą się w jeden wymiar
+      const wg = [];
+      for (const s of segs) {
+        const t1 = s.b.wyk1 || '', t2 = s.b.wyk2 || '';
+        if (!t1 && !t2) continue;
+        const g = wg[wg.length - 1];
+        if (g && Math.abs(g.b - s.a.dist) < 1e-6 && g.t1 === t1 && g.t2 === t2) g.b = s.b.dist; else wg.push({ a: s.a.dist, b: s.b.dist, t1, t2 });
+      }
+      let yc = posY(OP.wykChainY, terrTop + 12);
+      if (wg.length) { chain(yc, wg, 'Wymiary'); yc += 10; }
+      if (OP.distChain) chain(posY(OP.distChainY, yc), segs.map(s => ({ a: s.a.dist, b: s.b.dist, t1: U.fix(s.L, 2) })), 'Wymiary');
+      // odnośniki z rzędnymi dodatkowych punktów terenu (Odnośniki › Rzędne › Punkty terenu, film 89)
+      if (OP.terrainLeaders) for (const q of pts) {
+        if (q.kind !== 'terrain') continue;
+        const v = q.tp ?? q.ti; if (!has(v)) continue;
+        const x = xOf(q.dist), y = yAt(v, ppAt(q.dist)), s = U.fix(v, 2), w = s.length * 1.15 + 1;
+        line('Linie_odn', x, y, x + 3, y + 5, 'hair'); line('Linie_odn', x + 3, y + 5, x + 3 + w, y + 5, 'hair');
+        text('Teksty', x + 3.4, y + 5.6, 1.8, s);
+      }
+      // nazwa węzła w kółku nad rysunkiem (Odnośniki › Oznaczenie węzłów, film 89)
+      if (OP.nodeBubbles) {
+        const yb = posY(OP.nodeBubblesY, (OP.distChain ? yc + 10 : yc) + 4);
+        for (const n of nodes) { const x = xOf(n.dist); P.push({ t: 'circle', l: 'Opis_PZ', cx: x, cy: yb, r: 2.6, w: 'thin' }); line('Opis_PZ', x, yb - 2.6, x, Math.min(yb - 2.6, terrTop + 2), 'hair'); text('Opis_PZ', x, yb - 0.8, 1.8, R.pzMarks(n.name).name, 0, 'c'); }
+      }
+    }
+
+    // --- kontrola nakładania się tekstów w tabeli (Tabela › Szczegóły w PK): w każdym wierszu liczby pionowe
+    // przesuwane w prawo o wysokość tekstu, poziome (nazwy, długości, spadki) – na drugi poziom wiersza, gdy jest miejsce
+    if (OT.overlap) for (const r of rows) {
+      const inRow = P.filter(q => q.t === 'text' && q.y >= r.bot - 0.01 && q.y <= r.top + 0.01 && q.x > HW);
+      const vert = inRow.filter(q => q.rot === 90).sort((a, b) => a.x - b.x);
+      let last = -Infinity;
+      for (const q of vert) { if (q.x - q.h < last + 0.3) q.x = last + q.h + 0.3; last = q.x; }
+      const w = q => q.s.length * q.h * 0.62;
+      const ext = q => (q.al === 'c' ? [q.x - w(q) / 2, q.x + w(q) / 2] : q.al === 'r' ? [q.x - w(q), q.x] : [q.x, q.x + w(q)]);
+      const levels = new Map(); // y poziomu → prawa krawędź ostatniego tekstu
+      for (const q of inRow.filter(t => !t.rot).sort((a, b) => ext(a)[0] - ext(b)[0])) {
+        const [x0, x1] = ext(q), key = q.y.toFixed(2), right = levels.get(key) ?? -Infinity;
+        if (x0 >= right + 0.6) { levels.set(key, x1); continue; }
+        // drugi poziom: niżej o wysokość tekstu, jeśli mieści się w wierszu i jest tam wolne miejsce
+        const y2 = q.y - q.h - 0.5, k2 = y2.toFixed(2);
+        if (y2 >= r.bot + 0.3 && y2 + q.h <= r.top - 0.3 && x0 >= (levels.get(k2) ?? -Infinity) + 0.6) { q.y = y2; levels.set(k2, x1); }
+        else levels.set(key, Math.max(right, x1));
+      }
+    }
+
+    // --- opisy pionowe nad tabelą bliżej niż wysokość tekstu: przesunięcie w prawo z odnośnikiem od linii obiektu
+    // (Opcje › Opisy w PK: automatyczne przesunięcie o wysokość tekstu)
+    if (OP.spread) {
+      const V = P.filter(q => q.t === 'text' && q.rot === 90 && Math.abs(q.y - (yTop + 1)) < 1e-6 && ['Opis_PZ', 'Opis_skrz', 'Opis_wl', 'Opis_Arm'].includes(q.l)).sort((a, b) => a.x - b.x);
+      const gap = 2.7;
+      let last = -Infinity;
+      for (const q of V) {
+        if (q.x < last + gap) {
+          const x0 = q.x;
+          q.x = last + gap; q.y = yTop + 5;
+          line('Linie_odn', x0 + 0.6, yTop + 0.4, q.x + 0.6, yTop + 4.4, 'hair');
+        }
+        last = q.x;
+      }
+    }
+
+    // obwiednia arkusza (warstwa_nr_0)
+    let hi = yTop + 75;
+    for (const p of pts) for (const v of [p.tp, p.ti]) if (v !== null && v !== undefined) hi = Math.max(hi, yAt(v, ppAt(p.dist)) + 10 + (ppSegs.length > 1 ? PS.model.PP_NOTE_H : 0));
+    for (const n of nodes) hi = Math.max(hi, yTop + 4 + 1.36 * R.nodeLabel(n, nodeCalc.get(n)).length);
+    for (const k of crosses) hi = Math.max(hi, yTop + 4 + 1.36 * PS.model.crossingLabel(k.c, k).length);
+    // elementy rysunkowe (teksty, odnośniki) mogą sięgać wyżej niż teren – obwiednia z narysowanych prymitywów
+    let right = xEnd + 4;
+    for (const q of P) {
+      if (q.t === 'text') { hi = Math.max(hi, q.y + (q.rot ? q.s.length * 1.36 : q.h) + 3); if (!q.rot && q.al === 'l') right = Math.max(right, q.x + q.s.length * q.h * 0.62 + 3); }
+      else if (q.t === 'line') { hi = Math.max(hi, q.y1 + 3, q.y2 + 3); right = Math.max(right, q.x1 + 3, q.x2 + 3); }
+    }
+    // --- schemat sieci pod tabelą (plan lokalny): oś trasy wyprostowana, w węzłach przedłużenie poprzedniego odcinka
+    // pod kątem załamania, odgałęzienia pod swoim kątem względem trasy, wartości kątów
+    const schemaH = PS.model.schemaH(project);
+    if (schemaH && nodes.length) {
+      const ys = -21, A = calc.angles || new Map();
+      line('Schemat', xOf(nodes[0].dist), ys, xOf(nodes[nodes.length - 1].dist), ys, 'mid');
+      text('Schemat', 2, ys - 1, 2, 'SCHEMAT SIECI (PLAN LOKALNY)');
+      for (const n of nodes) {
+        const x = xOf(n.dist), a = A.get(n);
+        if (PS.WELL_TYPES.has(n.type)) P.push({ t: 'circle', l: 'Schemat', cx: x, cy: ys, r: 1.1, w: 'thin' });
+        else line('Schemat', x, ys - 1.2, x, ys + 1.2, 'thin');
+        if (!a) continue;
+        if (a.defl !== null && Math.abs(a.defl) >= 0.5) {
+          // przedłużenie poprzedniego odcinka (po wyprostowaniu następnego) – kierunek −załamanie
+          const r = -a.defl * Math.PI / 180;
+          line('Schemat', x, ys, x + 6 * Math.cos(r), ys + 6 * Math.sin(r), 'hair', 'DASHED');
+          text('Schemat', x + 1.2, ys - 4.2, 1.6, PS.model.angleText(a, OP.angleMode));
+        }
+        for (const b of a.branches) {
+          const r = b.rel * Math.PI / 180;
+          line('Schemat', x + 1.1 * Math.cos(r), ys + 1.1 * Math.sin(r), x + 7 * Math.cos(r), ys + 7 * Math.sin(r), 'thin');
+          text('Schemat', x + 7.6 * Math.cos(r), ys + 7.6 * Math.sin(r) - 0.6, 1.4, b.name.replace(/^odg\.\s*/, ''), 0, Math.cos(r) < 0 ? 'r' : 'l');
+        }
+      }
+    }
+    const bounds = { minX: -4, minY: -10 - schemaH, maxX: right, maxY: hi };
+    if (!opt.noBorder) P.unshift({ t: 'rect', l: 'warstwa_nr_0', x: bounds.minX + 1, y: bounds.minY + 1, w: bounds.maxX - bounds.minX - 2, h: bounds.maxY - bounds.minY - 2, lw: 'hair' });
+    return { prims: P, bounds, xOf, yOf, yTop, pp, X0, hS, vS, d0, layerStyle: project.layerStyle || null };
+  },
+
+  shift(prims, dx, dy) {
+    return prims.map(p => {
+      const q = { ...p };
+      for (const k of ['x', 'x1', 'x2', 'cx']) if (q[k] !== undefined) q[k] += dx;
+      for (const k of ['y', 'y1', 'y2', 'cy']) if (q[k] !== undefined) q[k] += dy;
+      if (q.pts) q.pts = q.pts.map(([x, y]) => [x + dx, y + dy]);
+      return q;
+    });
+  },
+
+  /* Arkusze: profil pocięty wg PS.model.planSheets, w ramce 297 × n·210 mm, z tabelką rysunkową w prawym dolnym rogu. */
+  /* Kreskowanie gruntu w słupku odwiertu (warstwa Geol_kresk) wg nazwy gruntu, w uproszczeniu jak w PN-B-04452:
+     piasek – kropki, żwir/pospółka – kółka, glina/ił/pył – ukośne, gleba/humus – kreski poziome, torf/namuł – pionowe, nasyp – krzyżowe. */
+  soilHatch(P, x0, y0, w, h, soil) {
+    const s = (soil || '').toLowerCase();
+    const L = (x1, y1, x2, y2) => P.push({ t: 'line', l: 'Geol_kresk', x1, y1, x2, y2, w: 'hair' });
+    // linie ukośne 45° (dir = 1 lub −1) przycięte do prostokąta
+    const diag = (step, dir) => {
+      for (let c = -h; c < w + h; c += step) {
+        const pts = [];
+        // y = y0 + (x − x0 − c)·dir … punkty przecięcia z bokami
+        for (const xx of [x0, x0 + w]) { const yy = dir > 0 ? y0 + (xx - x0 - c) : y0 + h - (xx - x0 - c); if (yy >= y0 - 1e-9 && yy <= y0 + h + 1e-9) pts.push([xx, yy]); }
+        for (const yy of [y0, y0 + h]) { const xx = dir > 0 ? x0 + c + (yy - y0) : x0 + c + (y0 + h - yy); if (xx >= x0 - 1e-9 && xx <= x0 + w + 1e-9) pts.push([xx, yy]); }
+        if (pts.length >= 2) { pts.sort((a, b) => a[0] - b[0]); L(pts[0][0], pts[0][1], pts[pts.length - 1][0], pts[pts.length - 1][1]); }
+      }
+    };
+    if (/nasyp/.test(s)) { diag(1.2, 1); diag(1.2, -1); }
+    else if (/glin|ił|il\b|pył|pyl|less/.test(s)) diag(0.9, 1);
+    else if (/torf|namu/.test(s)) for (let x = x0 + 0.6; x < x0 + w; x += 0.6) L(x, y0, x, y0 + h);
+    else if (/gleb|humus|ziemi/.test(s)) for (let y = y0 + 0.5; y < y0 + h; y += 0.9) { L(x0 + 0.3, y, x0 + w / 2 - 0.1, y); L(x0 + w / 2 + 0.3, y + 0.45 < y0 + h ? y + 0.45 : y, x0 + w - 0.3, y + 0.45 < y0 + h ? y + 0.45 : y); }
+    else if (/żwir|zwir|pospó|pospo|otocz/.test(s)) for (let y = y0 + 0.7; y < y0 + h - 0.3; y += 1.2) for (let x = x0 + 0.6 + ((y - y0) % 2.4 > 1.2 ? 0.6 : 0); x < x0 + w - 0.3; x += 1.2) P.push({ t: 'circle', l: 'Geol_kresk', cx: x, cy: y, r: 0.3, w: 'hair' });
+    else if (/pias/.test(s)) for (let y = y0 + 0.5; y < y0 + h - 0.2; y += 0.8) for (let x = x0 + 0.4 + ((y - y0) % 1.6 > 0.8 ? 0.4 : 0); x < x0 + w - 0.2; x += 0.8) L(x - 0.1, y, x + 0.1, y);
+  },
+
+  /* Plan sytuacyjny do DXF (Generator przy rzutni Plan, F4): współrzędne terenowe [m] (X = wschód, Y = północ),
+     wysokość tekstów wg skali planu (2 mm na wydruku). Sieci na warstwach wg rodzaju, węzły w wymiarze studni,
+     opisy wg Opcji planu (nazwy, odcinki ⌀/i/L, kierunek przepływu). */
+  buildPlan(projects, opt = {}) {
+    const P = [], U = PS.util;
+    let bb = [Infinity, Infinity, -Infinity, -Infinity];
+    const grow = (x, y) => { bb = [Math.min(bb[0], x), Math.min(bb[1], y), Math.max(bb[2], x), Math.max(bb[3], y)]; };
+    const netLayer = p => p.netType === 'Wodociąg' ? 'Plan_wod' : p.netType === 'Sieć gazowa' ? 'Plan_gaz' : p.netType === 'Sieć cieplna' ? 'Plan_co'
+      : p.netKind === 'Deszczowa' ? 'Plan_kan_d' : p.netKind === 'Sanitarna' ? 'Plan_kan_s' : 'Plan_kan';
+    for (const p of projects) {
+      const PO = PS.optOf(p).plan, S = opt.scale || PO.scale || 500, th = 2 * S / 1000, L = netLayer(p);
+      for (const f of p.profiles) {
+        if (f.off) continue; // profil skasowany (Ctrl+Del) nie trafia do rysunku
+        const ns = PS.model.nodesOf(f).filter(n => n.x !== null && n.y !== null && n.x !== undefined);
+        if (ns.length < 2) { ns.forEach(n => grow(n.x, n.y)); continue; }
+        P.push({ t: 'pline', l: L, pts: ns.map(n => [n.x, n.y]), w: 'mid' });
+        let dnPrev = null;
+        for (let i = 1; i < ns.length; i++) {
+          const a = ns[i - 1], b = ns[i], len = Math.hypot(b.x - a.x, b.y - a.y);
+          const dn = b.pipeDn ?? dnPrev ?? p.defaultDn; dnPrev = dn;
+          if (len < 1e-6) continue;
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+          let ang = Math.atan2(uy, ux) * 180 / Math.PI; if (ang > 90 || ang < -90) ang += 180;
+          if (PO.segs !== false && len >= (PO.segMin || 0)) {
+            const i0 = a.invOut ?? a.inv, L2 = b.dist - a.dist, sl = L2 > 0 && i0 !== null && i0 !== undefined && b.inv !== null && b.inv !== undefined ? (b.inv - i0) / L2 * 100 : null;
+            const r = ang * Math.PI / 180;
+            P.push({ t: 'text', l: 'Plan_opisy', x: mx - Math.sin(r) * th * 0.6, y: my + Math.cos(r) * th * 0.6, h: th, s: `⌀${U.m(dn)}${sl !== null ? ` i=${U.pct(sl, 1)}` : ''} L=${U.fix(L2, 1)}m`, rot: ang, al: 'c' });
+          }
+          if (PO.flow !== false) {
+            // przepływ do wylotu (początek profilu): strzałka od b do a
+            const s = th * 1.2, tx = mx - ux * s, ty = my - uy * s;
+            P.push({ t: 'pline', l: 'Plan_kierunek', pts: [[tx, ty], [mx + ux * s * 0.2 - uy * s * 0.45, my + uy * s * 0.2 + ux * s * 0.45], [mx + ux * s * 0.2 + uy * s * 0.45, my + uy * s * 0.2 - ux * s * 0.45]], w: 'thin', closed: true });
+          }
+        }
+        for (const n of ns) {
+          grow(n.x, n.y);
+          const r = PS.WELL_TYPES.has(n.type) ? Math.max((n.dn || 1) / 2, th * 0.3) : th * 0.25;
+          P.push({ t: 'circle', l: 'Plan_wezly', cx: n.x, cy: n.y, r, w: 'thin' });
+          const pm = PS.render.pzMarks(n.name); // „#” – bez nazwy na planie
+          if (PO.names !== false && pm.name && !pm.hidePlan) {
+            // opis przesunięty na planie (n.planLbl [m]) – z odnośnikiem do węzła
+            const o = n.planLbl || [0, 0];
+            if (o[0] || o[1]) P.push({ t: 'line', l: 'Plan_opisy', x1: n.x, y1: n.y, x2: n.x + o[0], y2: n.y + o[1], w: 'hair' });
+            P.push({ t: 'text', l: 'Plan_opisy', x: n.x + o[0] + r + th * 0.3, y: n.y + o[1] + r + th * 0.2, h: th, s: pm.name, rot: 0, al: 'l' });
+          }
+          if (PO.coords) P.push({ t: 'text', l: 'Plan_opisy', x: n.x + r + th * 0.3, y: n.y - th * 1.2, h: th * 0.8, s: `X=${U.fix(n.y, PO.coordDec)} Y=${U.fix(n.x, PO.coordDec)}`, rot: 0, al: 'l' });
+          if (PO.levels) {
+            const t = n.tp ?? n.ti, lines = [t !== null && t !== undefined ? `Rt=${U.fix(t, 2)}` : '', n.inv !== null && n.inv !== undefined ? `Rd=${U.fix(n.inv, 2)}` : ''].filter(Boolean);
+            lines.forEach((s, k) => P.push({ t: 'text', l: 'Plan_opisy', x: n.x + r + th * 0.3, y: n.y - th * (PO.coords ? 2.4 : 1.2) - k * th * 1.2, h: th * 0.8, s, rot: 0, al: 'l' }));
+          }
+        }
+        // obiekty profilu na planie (PK: opisy uzbrojenia, rur ochronnych i odwiertów): ⊗ skrzyżowanie, rura ochronna wzdłuż trasy, odwiert
+        if (PO.objects !== false) {
+          const at = d => PS.model.xyOf(f, d);
+          const mark = (x, y, s) => {
+            const q = th * 0.45;
+            P.push({ t: 'circle', l: 'Plan_obiekty', cx: x, cy: y, r: q, w: 'thin' });
+            P.push({ t: 'line', l: 'Plan_obiekty', x1: x - q * 0.7, y1: y - q * 0.7, x2: x + q * 0.7, y2: y + q * 0.7, w: 'thin' }, { t: 'line', l: 'Plan_obiekty', x1: x - q * 0.7, y1: y + q * 0.7, x2: x + q * 0.7, y2: y - q * 0.7, w: 'thin' });
+            if (s) P.push({ t: 'text', l: 'Plan_obiekty', x: x + q + th * 0.2, y: y - th * 0.4, h: th * 0.7, s, rot: 0, al: 'l' });
+          };
+          for (const c of f.crossings || []) {
+            if (c.virtual || PS.utilKind(c.type) === 'inlet') continue;
+            const q = has(c.x) && has(c.y) ? { x: c.x, y: c.y } : at(c.dist);
+            if (!q) continue;
+            const s = [c.status, c.type === 'Skrzyżowanie' ? '' : c.type, c.sub, c.ozn || (c.dn ? `⌀${U.m(c.dn)}` : '')].filter(Boolean).join(' ');
+            const o = c.planLbl || [0, 0];
+            mark(q.x, q.y, o[0] || o[1] ? '' : s);
+            if (o[0] || o[1]) { P.push({ t: 'line', l: 'Plan_obiekty', x1: q.x, y1: q.y, x2: q.x + o[0], y2: q.y + o[1], w: 'hair' }); P.push({ t: 'text', l: 'Plan_obiekty', x: q.x + o[0] + th * 0.2, y: q.y + o[1] - th * 0.4, h: th * 0.7, s, rot: 0, al: 'l' }); }
+            // ułożenie przewodu (c.dir [°]) – odcinek osi przewodu przez ⊗
+            if (has(c.dir)) { const a = c.dir * Math.PI / 180, L = th * 3; P.push({ t: 'line', l: 'Plan_obiekty', x1: q.x - Math.cos(a) * L, y1: q.y - Math.sin(a) * L, x2: q.x + Math.cos(a) * L, y2: q.y + Math.sin(a) * L, w: 'thin', lt: 'DASHED' }); }
+          }
+          for (const e of f.elements || []) {
+            if (e.kind !== 'casing' || !e.length) continue;
+            const a = at(e.dist), b = at(e.dist + e.length);
+            if (!a || !b) continue;
+            P.push({ t: 'line', l: 'Plan_obiekty', x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: 'thick' });
+            P.push({ t: 'text', l: 'Plan_obiekty', x: (a.x + b.x) / 2 + th * 0.4, y: (a.y + b.y) / 2 + th * 0.4, h: th * 0.7, s: PS.model.casingLabel(e, null), rot: 0, al: 'l' });
+          }
+          for (const bh of f.boreholes || []) {
+            const q = at(bh.dist);
+            if (!q) continue;
+            P.push({ t: 'circle', l: 'Plan_obiekty', cx: q.x, cy: q.y, r: th * 0.4, w: 'mid' });
+            P.push({ t: 'text', l: 'Plan_obiekty', x: q.x + th * 0.6, y: q.y + th * 0.3, h: th * 0.7, s: bh.name || 'Otw.', rot: 0, al: 'l' });
+          }
+        }
+      }
+    }
+    if (!isFinite(bb[0])) bb = [0, 0, 1, 1];
+    return { prims: P, bounds: { minX: bb[0], minY: bb[1], maxX: bb[2], maxY: bb[3] }, layerStyle: (projects[0] && projects[0].layerStyle) || null };
+  },
+
+  /* Rysunek z listy rysunków (Lista rysunków w PK): profile wybrane etapem albo indywidualną listą, własne skale i ramka;
+     profile jeden nad drugim (każdy jako arkusze obok siebie albo profil ciągły). */
+  buildDrawing(project, d) {
+    const R = PS.render;
+    const P2 = Object.assign({}, project, {
+      scaleH: d.scaleH || project.scaleH, scaleV: d.scaleV || project.scaleV,
+      frame: Object.assign({}, project.frame || {}, d.frameH ? { height: d.frameH } : {}, d.maxLen ? { maxLen: d.maxLen } : {}),
+      sheetInfo: Object.assign({}, project.sheetInfo || {}, d.no ? { drawingNo: d.no } : {}, d.title ? { title: d.title } : {}),
+    });
+    const profs = PS.drawings.profiles(project, d), prims = [];
+    let y = 0, maxX = 0;
+    // rząd = profil główny, a obok jego odgałęzienia (jak w przykładach PK); kolejne profile główne – kolejne rzędy
+    for (const grp of PS.model.treeGroups(project, profs)) {
+      // odgałęzienia: bez przedniej tabelki, 20 mm obok profilu głównego, tabele na jednej linii
+      const parts = grp.map(f => {
+        const calc = PS.model.compute(P2, f);
+        if (d.sheets) {
+          let x = 0; const row = [];
+          for (const s of R.buildSheets(P2, f, calc)) { row.push(...R.shift(s.prims, x, 0)); x += s.len + 20; }
+          return { row, top: PS.model.frame(P2).height, below: 0, w: x - 20 };
+        }
+        const v = R.build(P2, f, calc, PS.model.hostOf(project, f) ? { noHead: true } : {});
+        return { row: R.shift(v.prims, -v.bounds.minX, 0), top: v.bounds.maxY, below: -Math.min(0, v.bounds.minY), w: v.bounds.maxX - v.bounds.minX };
+      });
+      const top = Math.max(...parts.map(q => q.top)), below = Math.max(...parts.map(q => q.below));
+      let x = 0;
+      for (const q of parts) { prims.push(...R.shift(q.row, x, y - top)); x += q.w + 20; }
+      y -= top + below + 20; maxX = Math.max(maxX, x - 20);
+    }
+    return { prims, bounds: { minX: 0, minY: Math.min(0, y + 20), maxX, maxY: 0 }, profiles: profs, layerStyle: project.layerStyle || null };
+  },
+
+  buildSheets(project, profile, calc) {
+    project = PS.model.eff(project, profile);
+    const R = PS.render, U = PS.util, fr = PS.model.frame(project);
+    const plan = PS.model.planSheets(project, calc);
+    const n = plan.length;
+    return plan.map((sh, i) => {
+      const pp = sh.pps[0].pp, ppChanged = sh.pps.some(q => q.changed), ppChanges = sh.pps.length - 1;
+      const label = n > 1 ? `Arkusz ${i + 1}/${n}` : '';
+      const inner = R.build(project, profile, calc, { d0: sh.d0, d1: sh.d1, pp, ppSegs: sh.pps, noBorder: true, sheetLabel: label });
+      const ox = fr.marginLeft + fr.margin + fr.offset - 5, oy = fr.margin + fr.offset + PS.model.schemaH(project);
+      const P = R.shift(inner.prims, ox, oy);
+      const L = sh.len, H = fr.height, m = fr.margin, ml = fr.marginLeft + fr.margin;
+      // ramka: obrys arkusza, ramka wewnętrzna, znaczniki składania co moduł strony od prawej
+      P.push({ t: 'rect', l: 'Ramka', x: 0, y: 0, w: L, h: H, lw: 'hair' });
+      P.push({ t: 'rect', l: 'Ramka', x: ml, y: m, w: L - ml - m, h: H - 2 * m, lw: 'mid' });
+      for (let x = L - fr.page; x > ml + 1; x -= fr.page) {
+        P.push({ t: 'line', l: 'Ramka', x1: x, y1: 0, x2: x, y2: m, w: 'hair' }, { t: 'line', l: 'Ramka', x1: x, y1: H - m, x2: x, y2: H, w: 'hair' });
+      }
+      P.push({ t: 'text', l: 'Tabelka', x: 12, y: m + 2, h: 2, s: `FORMAT ${H}×${L}`, rot: 90, al: 'l' });
+      const info = Object.assign({}, R.SHEET_INFO, project.sheetInfo || {});
+      if (info.copyright) P.push({ t: 'text', l: 'Tabelka', x: 12, y: H - m - 2, h: 1.6, s: info.copyright, rot: 90, al: 'r' });
+      R.titleBlock(P, L - m - 105, m, project, profile, info, { i: i + 1, n, d0: sh.d0, d1: sh.d1 });
+      const contentTop = inner.bounds.maxY + oy;
+      return {
+        prims: P, bounds: { minX: 0, minY: 0, maxX: L, maxY: H }, layerStyle: project.layerStyle || null, len: L, d0: sh.d0, d1: sh.d1, pp, ppChanged, ppChanges, pps: sh.pps, no: i + 1, count: n,
+        overflow: contentTop > H - m ? contentTop - (H - m) : 0,
+        xOf: d => inner.xOf(d) + ox, yOf: e => inner.yOf(e) + oy, yTop: inner.yTop + oy, X0: inner.X0 + ox, hS: inner.hS, vS: inner.vS,
+      };
+    });
+  },
+
+  SHEET_INFO: {
+    office: '', branch: 'SANITARNA', designer: '', license: '', date: '', phase: 'PROJEKT TECHNICZNY', phaseCode: 'PT',
+    investor: '', investment: '', address: '', projectNo: '', drawingNo: '', rev: '0', title: '',
+    copyright: 'Rysunek chroniony prawem autorskim. Kopiowanie, powielanie i udostępnianie bez zgody autora zabronione.',
+  },
+
+  /* Tabelka rysunkowa pionowa 105 × 118 mm (wzór 25.PWN): biuro, branża, projektował, faza, inwestor, inwestycja, adres, tytuł, skala/nr. */
+  titleBlock(P, x0, y0, project, profile, info, sh) {
+    const U = PS.util, W = 105;
+    const line = (x1, y1, x2, y2, w = 'thin') => P.push({ t: 'line', l: 'Tabelka', x1, y1, x2, y2, w });
+    const text = (x, y, h, s, al = 'l') => { if (s) P.push({ t: 'text', l: 'Tabelka', x, y, h, s: String(s), rot: 0, al }); };
+    // dzielenie tekstu na linie wg szerokości pola (szacunek szerokości znaku SIMPLEX × 0,8)
+    const wrap = (s, width, h, maxLines) => {
+      const per = Math.max(4, Math.floor(width / (h * 0.62))), out = [];
+      let cur = '';
+      for (const w of String(s || '').split(/\s+/)) {
+        if ((cur + ' ' + w).trim().length > per && cur) { out.push(cur); cur = w; } else cur = (cur + ' ' + w).trim();
+      }
+      if (cur) out.push(cur);
+      if (out.length > maxLines) { out.length = maxLines; out[maxLines - 1] = out[maxLines - 1].slice(0, per - 1) + '…'; }
+      return out;
+    };
+    const rows = [16, 8, 14, 8, 12, 14, 10, 22, 10, 4];
+    const H = rows.reduce((a, b) => a + b, 0);
+    P.push({ t: 'rect', l: 'Tabelka', x: x0, y: y0, w: W, h: H, lw: 'mid' });
+    let y = y0 + H;
+    const cells = [];
+    for (const h of rows) { cells.push({ top: y, bot: y - h, h }); y -= h; if (y > y0 + 0.01) line(x0, y, x0 + W, y); }
+    const lab = (c, s, x = x0 + 1.5) => text(x, c.top - 2.6, 1.6, s);
+    const net = [project.netType, project.netKind].filter(Boolean).join(' ').toUpperCase();
+    const title = info.title || `PROFIL PODŁUŻNY – ${net}`;
+    const sub = `${profile.name}${sh.n > 1 ? ` · arkusz ${sh.i}/${sh.n}` : ''} · Mb ${U.fix(sh.d0, 2)}–${U.fix(sh.d1, 2)}`;
+    const no = info.drawingNo ? (sh.n > 1 ? `${info.drawingNo}.${sh.i}` : info.drawingNo) : '';
+    // 0 logo (po lewej, maks. 40 × 12 mm, proporcje zachowane) i nazwa biura
+    let ox = x0, ow = W;
+    if (info.logo && info.logoRuns) {
+      const r = info.logoRuns, k = Math.min(40 / r.w, (cells[0].h - 4) / r.h), lw = r.w * k, lh = r.h * k;
+      P.push({ t: 'image', l: 'Logo', x: x0 + 2, y: cells[0].bot + (cells[0].h - lh) / 2, w: lw, h: lh, href: info.logo, runs: r });
+      ox = x0 + 2 + lw + 2; ow = W - lw - 4;
+    }
+    const office = wrap(info.office, ow - 4, 3, 2);
+    office.forEach((s, k) => text(ox + ow / 2, cells[0].top - (office.length > 1 ? 6 : 9.2) - k * 4.5, 3, s, 'c'));
+    // 1 branża
+    lab(cells[1], 'BRANŻA:'); text(x0 + 22, cells[1].bot + 2.4, 2.5, info.branch);
+    // 2 projektował | data | podpis
+    const c2 = cells[2], xs = [x0, x0 + 70, x0 + 88, x0 + W];
+    line(xs[1], c2.top, xs[1], c2.bot); line(xs[2], c2.top, xs[2], c2.bot);
+    lab(c2, 'PROJEKTOWAŁ:'); lab(c2, 'DATA:', xs[1] + 1.2); lab(c2, 'PODPIS:', xs[2] + 1.2);
+    text(x0 + 1.5, c2.bot + 6, 2.5, info.designer); text(x0 + 1.5, c2.bot + 1.8, 1.8, info.license);
+    text(xs[1] + 1.2, c2.bot + 3, 2, info.date);
+    // 3 faza
+    lab(cells[3], 'FAZA:'); text(x0 + 22, cells[3].bot + 2.4, 2.5, info.phase);
+    // 4 inwestor, 5 nazwa inwestycji, 6 adres
+    for (const [ci, l, v, ml] of [[4, 'INWESTOR:', info.investor, 2], [5, 'NAZWA INWESTYCJI:', info.investment, 2], [6, 'ADRES:', info.address, 1]]) {
+      const c = cells[ci]; lab(c, l);
+      wrap(v, W - 4, 2.5, ml).forEach((s, k) => text(x0 + 1.5, c.top - 6.5 - k * 3.6, 2.5, s));
+    }
+    // 7 tytuł + podtytuł
+    const c7 = cells[7]; lab(c7, 'TYTUŁ RYSUNKU:');
+    wrap(title, W - 4, 3.5, 2).forEach((s, k) => text(x0 + 1.5, c7.top - 8 - k * 5, 3.5, s));
+    text(x0 + 1.5, c7.bot + 2, 2, sub);
+    // 8 skala | nr projektu | faza | nr rysunku | nr rew.
+    const c8 = cells[8], cols = [[25, 'SKALA:', `1:${project.scaleV}/1:${project.scaleH}`], [25, 'NR PROJEKTU:', info.projectNo], [15, 'FAZA:', info.phaseCode], [25, 'NR RYSUNKU:', no], [15, 'NR REW.:', info.rev]];
+    let cx = x0;
+    cols.forEach(([w, l, v], k) => { if (k) line(cx, c8.top, cx, c8.bot); lab(c8, l, cx + 1.2); text(cx + 1.2, c8.bot + 1.8, 2.5, v); cx += w; });
+    // 9 stopka
+    text(x0 + W / 2, cells[9].bot + 1.2, 1.2, info.copyright ? 'Rysunek chroniony prawem autorskim' : '', 'c');
+  },
+
+  toSVG(sheet, pxPerMm, opts = {}) {
+    const { prims, bounds: B } = sheet;
+    const W = B.maxX - B.minX, H = B.maxY - B.minY;
+    const X = x => (x - B.minX).toFixed(3), Y = y => (B.maxY - y).toFixed(3);
+    const esc = PS.util.esc;
+    // kolor warstwy: z szablonu PK (ACI) albo domyślny; ACI → token motywu, gdy istnieje
+    const ACI_CSS = { 1: 'var(--layer-1, #d00000)', 2: 'var(--terrain-design, #a89200)', 3: 'var(--terrain-existing, #00a000)', 4: '#00a0a0', 5: 'var(--layer-5, #0000d0)', 6: '#c000c0', 7: 'var(--layer-7, #000)', 8: 'var(--layer-8, #6e6e6e)', 9: '#a0a0a0' };
+    const col = l => {
+      const L = PS.LAYERS[l] || {}, s = sheet.layerStyle && sheet.layerStyle[l];
+      if (s && s.aci && s.aci !== L.aci) return ACI_CSS[s.aci] || (PS.aciRGB ? PS.aciRGB(s.aci, 'var(--layer-7, #000)') : 'var(--layer-7, #000)');
+      return L.css ? `var(${L.css}, ${L.fb})` : 'var(--layer-7, #000)';
+    };
+    const ltOf = (l, lt) => (sheet.layerStyle && sheet.layerStyle[l] && sheet.layerStyle[l].lt) || lt;
+    const st = (l, w, lt0) => { const lt = ltOf(l, lt0); return `stroke:${col(l)};stroke-width:${PS.WIDTH[w] || 0.25}${lt && PS.DASH[lt] ? `;stroke-dasharray:${PS.DASH[lt]}` : ''}`; };
+    const off = l => !!(sheet.layerStyle && sheet.layerStyle[l] && sheet.layerStyle[l].off); // warstwa wyłączona w Konfiguracja › Warstwy
+    const out = [];
+    for (const p of prims) {
+      if (off(p.l)) continue;
+      if (p.t === 'line') out.push(`<line x1="${X(p.x1)}" y1="${Y(p.y1)}" x2="${X(p.x2)}" y2="${Y(p.y2)}" style="${st(p.l, p.w, p.lt)}"/>`);
+      else if (p.t === 'pline') out.push(`<${p.closed ? 'polygon' : 'polyline'} fill="none" points="${p.pts.map(q => X(q[0]) + ',' + Y(q[1])).join(' ')}" style="${st(p.l, p.w, p.lt)}"/>`);
+      else if (p.t === 'circle') out.push(`<circle cx="${X(p.cx)}" cy="${Y(p.cy)}" r="${p.r.toFixed(3)}" fill="none" style="${st(p.l, p.w)}"/>`);
+      else if (p.t === 'image') out.push(`<image href="${p.href}" x="${X(p.x)}" y="${Y(p.y + p.h)}" width="${p.w.toFixed(3)}" height="${p.h.toFixed(3)}" preserveAspectRatio="xMidYMid meet"/>`);
+      else if (p.t === 'rect') out.push(`<rect x="${X(p.x)}" y="${Y(p.y + p.h)}" width="${p.w.toFixed(3)}" height="${p.h.toFixed(3)}" fill="${p.l === 'Wezly' ? 'var(--sheet-bg, #fff)' : 'none'}" style="${st(p.l, p.lw)}"/>`);
+      else if (p.t === 'hekto') {
+        const cx = X(p.x), cy = Y(p.y);
+        out.push(`<circle cx="${cx}" cy="${cy}" r="${p.r}" fill="none" style="${st(p.l, 'hair')}"/>`,
+          `<path d="M${cx} ${(+cy - p.r).toFixed(3)} A${p.r} ${p.r} 0 0 1 ${cx} ${(+cy + p.r).toFixed(3)} Z" style="fill:${col(p.l)};stroke:none"/>`,
+          `<line x1="${(p.x - B.minX - p.r - 0.5).toFixed(3)}" y1="${cy}" x2="${(p.x - B.minX + p.r + 0.5).toFixed(3)}" y2="${cy}" style="${st(p.l, 'hair')}"/>`);
+      } else if (p.t === 'text') {
+        const anchor = p.al === 'c' ? 'middle' : p.al === 'r' ? 'end' : 'start';
+        const tr = p.rot ? ` transform="translate(${X(p.x)},${Y(p.y)}) rotate(-90)"` : '';
+        const pos = p.rot ? 'x="0" y="0"' : `x="${X(p.x)}" y="${Y(p.y)}"`;
+        out.push(`<text ${pos}${tr} text-anchor="${anchor}" style="font-size:${(p.h / 0.7).toFixed(3)}px;fill:${col(p.l)}">${esc(p.s)}</text>`);
+      }
+    }
+    const wAttr = opts.print ? `${W.toFixed(1)}mm` : (W * pxPerMm).toFixed(0);
+    const hAttr = opts.print ? `${H.toFixed(1)}mm` : (H * pxPerMm).toFixed(0);
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W.toFixed(3)} ${H.toFixed(3)}" width="${wAttr}" height="${hAttr}" ` +
+      `style="font-family:var(--font-narrow, 'Arial Narrow', sans-serif);background:var(--sheet-bg, #fff)">${out.join('')}</svg>`;
+  },
+
+  toDXF(sheet) {
+    const { prims, bounds: B } = sheet;
+    const o = [];
+    const g = (c, v) => o.push(String(c), String(v));
+    const n = v => (+v).toFixed(4);
+    // SIMPLEX.SHX nie ma półpauzy ani kropki środkowej – w DXF zwykły myślnik
+    const txt = s => String(s).replace(/⌀/g, '%%c').replace(/[–—·]/g, '-');
+    g(0, 'SECTION'); g(2, 'HEADER');
+    g(9, '$ACADVER'); g(1, 'AC1009');
+    g(9, '$DWGCODEPAGE'); g(3, 'ANSI_1250');
+    g(9, '$EXTMIN'); g(10, n(B.minX)); g(20, n(B.minY)); g(30, 0);
+    g(9, '$EXTMAX'); g(10, n(B.maxX)); g(20, n(B.maxY)); g(30, 0);
+    g(9, '$LTSCALE'); g(40, '1.0');
+    g(0, 'ENDSEC');
+    g(0, 'SECTION'); g(2, 'TABLES');
+    g(0, 'TABLE'); g(2, 'LTYPE'); g(70, 5);
+    const lt = (name, desc, pat) => {
+      g(0, 'LTYPE'); g(2, name); g(70, 0); g(3, desc); g(72, 65); g(73, pat.length);
+      g(40, n(pat.reduce((s, v) => s + Math.abs(v), 0)));
+      for (const v of pat) g(49, n(v));
+    };
+    lt('CONTINUOUS', 'Solid line', []);
+    lt('HIDDEN', '__ __ __', [3, -1.5]);
+    lt('CENTER', '____ _ ____', [8, -1.5, 1.5, -1.5]);
+    lt('DASHED', '__ __ __', [5, -2.5]);
+    lt('DASHDOT', '__ . __ .', [5, -1.5, 0.5, -1.5]);
+    g(0, 'ENDTAB');
+    const layers = Object.keys(PS.LAYERS);
+    const LTS = new Set(['CONTINUOUS', 'HIDDEN', 'CENTER', 'DASHED', 'DASHDOT']);
+    g(0, 'TABLE'); g(2, 'LAYER'); g(70, layers.length + 1);
+    g(0, 'LAYER'); g(2, '0'); g(70, 0); g(62, 7); g(6, 'CONTINUOUS');
+    for (const l of layers) {
+      // kolor i rodzaj linii warstwy: z szablonu PK (Konfiguracja › Warstwy) albo domyślne
+      const s = sheet.layerStyle && sheet.layerStyle[l];
+      const ltName = (s && s.lt) || PS.LAYERS[l].lt || 'CONTINUOUS';
+      g(0, 'LAYER'); g(2, l); g(70, 0); g(62, (s && s.aci) || PS.LAYERS[l].aci); g(6, LTS.has(ltName) ? ltName : 'CONTINUOUS');
+    }
+    g(0, 'ENDTAB');
+    g(0, 'TABLE'); g(2, 'STYLE'); g(70, 1);
+    g(0, 'STYLE'); g(2, 'STANDARD'); g(70, 0); g(40, '0.0'); g(41, '0.8'); g(50, '0.0'); g(71, 0); g(42, '2.0'); g(3, 'simplex.shx'); g(4, '');
+    g(0, 'ENDTAB');
+    g(0, 'ENDSEC');
+    g(0, 'SECTION'); g(2, 'ENTITIES');
+    const poly = (l, pts, closed) => {
+      g(0, 'POLYLINE'); g(8, l); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, closed ? 1 : 0);
+      for (const [x, y] of pts) { g(0, 'VERTEX'); g(8, l); g(10, n(x)); g(20, n(y)); g(30, 0); }
+      g(0, 'SEQEND'); g(8, l);
+    };
+    for (const p of prims) {
+      if (sheet.layerStyle && sheet.layerStyle[p.l] && sheet.layerStyle[p.l].off) continue; // warstwa wyłączona
+      if (p.t === 'line') { g(0, 'LINE'); g(8, p.l); g(10, n(p.x1)); g(20, n(p.y1)); g(30, 0); g(11, n(p.x2)); g(21, n(p.y2)); g(31, 0); }
+      else if (p.t === 'pline') poly(p.l, p.pts, p.closed);
+      else if (p.t === 'circle') { g(0, 'CIRCLE'); g(8, p.l); g(10, n(p.cx)); g(20, n(p.cy)); g(30, 0); g(40, n(p.r)); }
+      else if (p.t === 'image' && p.runs) {
+        // logo: DXF R12 nie ma obrazów – ciemne piksele jako wypełnione prostokąty SOLID (kolejność wierzchołków 1-2-4-3)
+        const r = p.runs, px = p.w / r.w, py = p.h / r.h;
+        for (const [y, a, b] of r.runs) {
+          const x1 = p.x + a * px, x2 = p.x + b * px, yt = p.y + p.h - y * py, yb = yt - py;
+          g(0, 'SOLID'); g(8, p.l); g(10, n(x1)); g(20, n(yb)); g(30, 0); g(11, n(x2)); g(21, n(yb)); g(31, 0);
+          g(12, n(x1)); g(22, n(yt)); g(32, 0); g(13, n(x2)); g(23, n(yt)); g(33, 0);
+        }
+      }
+      else if (p.t === 'rect') poly(p.l, [[p.x, p.y], [p.x + p.w, p.y], [p.x + p.w, p.y + p.h], [p.x, p.y + p.h]], true);
+      else if (p.t === 'hekto') {
+        g(0, 'CIRCLE'); g(8, p.l); g(10, n(p.x)); g(20, n(p.y)); g(30, 0); g(40, n(p.r));
+        g(0, 'LINE'); g(8, p.l); g(10, n(p.x - p.r - 0.5)); g(20, n(p.y)); g(30, 0); g(11, n(p.x + p.r + 0.5)); g(21, n(p.y)); g(31, 0);
+      } else if (p.t === 'text') {
+        g(0, 'TEXT'); g(8, p.l); g(10, n(p.x)); g(20, n(p.y)); g(30, 0); g(40, n(p.h)); g(1, txt(p.s));
+        if (p.rot) g(50, n(p.rot));
+        g(41, '0.8'); g(7, 'STANDARD');
+        if (p.al === 'c' || p.al === 'r') { g(72, p.al === 'c' ? 1 : 2); g(11, n(p.x)); g(21, n(p.y)); g(31, 0); }
+      }
+    }
+    g(0, 'ENDSEC'); g(0, 'EOF');
+    return PS.render.encode1250(o.join('\r\n') + '\r\n');
+  },
+
+  encode1250(s) {
+    const map = { 'Ą': 0xA5, 'ą': 0xB9, 'Ć': 0xC6, 'ć': 0xE6, 'Ę': 0xCA, 'ę': 0xEA, 'Ł': 0xA3, 'ł': 0xB3, 'Ń': 0xD1, 'ń': 0xF1,
+      'Ó': 0xD3, 'ó': 0xF3, 'Ś': 0x8C, 'ś': 0x9C, 'Ź': 0x8F, 'ź': 0x9F, 'Ż': 0xAF, 'ż': 0xBF, '°': 0xB0, '‰': 0x89, '–': 0x96, '—': 0x97, 'ä': 0xE4, 'ö': 0xF6, 'ü': 0xFC, 'é': 0xE9 };
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i], code = c.charCodeAt(0);
+      out[i] = code < 128 ? code : (map[c] ?? 0x3F);
+    }
+    return out;
+  },
+};
+</script>
+<script>/* Most model 3D -> Profil Sieci: profil po trasie sieci jako projekt Profil Sieci (układ Profil Koordynatora). */
+const PSB = {
+  netOf(g) {
+    const id = g.id;
+    if (/^W/.test(id)) return { netType: 'Wodociąg', netKind: '', flow: 'ciśnieniowa', ref: 'rz. osi' };
+    if (/^G/.test(id)) return { netType: 'Sieć gazowa', netKind: '', flow: 'ciśnieniowa', ref: 'rz. osi' };
+    if (/^C/.test(id)) return { netType: 'Sieć cieplna', netKind: '', flow: 'ciśnieniowa', ref: 'rz. osi' };
+    if (/^KD/.test(id)) return { netType: 'Kanalizacja', netKind: 'Deszczowa', flow: 'grawitacyjna', ref: 'rz. dna' };
+    if (/^KO/.test(id)) return { netType: 'Kanalizacja', netKind: 'Ogólnospławna', flow: 'grawitacyjna', ref: 'rz. dna' };
+    return { netType: 'Kanalizacja', netKind: 'Sanitarna', flow: 'grawitacyjna', ref: 'rz. dna' };
+  },
+  utilOf(cr) {
+    const gl = (cr.gl || '').toLowerCase(), d = (cr.desc || '').toLowerCase();
+    if (/kabl|teletech|energ|oświetl|telekom|kanał technolog/.test(gl)) {
+      const sub = /tele|telekom|technolog/.test(gl + d) ? 'telekomunikacyjny' : 'elektroenergetyczny';
+      return { type: 'Kabel', sub };
+    }
+    if (/wod/.test(gl)) return { type: 'Wod.', sub: '' };
+    if (/gaz/.test(gl)) return { type: 'Gaz.', sub: '' };
+    if (/cie[pł]/.test(gl)) return { type: 'S.Cieplna', sub: '' };
+    if (/ks|sanit/.test(gl)) return { type: 'Kan.', sub: 'sanitarna' };
+    if (/ko|ogólno/.test(gl)) return { type: 'Kan.', sub: 'ogólnospławna' };
+    if (/kd|deszcz/.test(gl)) return { type: 'Kan.', sub: 'deszczowa' };
+    if (/kan/.test(gl)) return { type: 'Kan.', sub: '' };
+    return { type: 'Inne', sub: '' };
+  },
+  // opis odcinka z modelu: "S8–S7  PE-HD min. SN8 DN600 L=23,47 m  dno/oś …"
+  pipe(lg) {
+    const t = (lg.desc.split('  ')[1] || '');
+    const m = t.match(/DN\s*(\d+)/i), dz = t.match(/(\d+)\s*[x×]\s*[\d,.]+/);
+    const dn = m ? +m[1] / 1000 : dz ? +dz[1] / 1000 : PSB.r3(2 * lg.r);
+    const mat = t.replace(/DN\s*\d+/gi, '').replace(/L\s*=\s*[\d,.]+\s*m/gi, '').replace(/\bmin\.\s*/gi, '').replace(/\s+/g, ' ').trim();
+    return { dn, mat };
+  },
+  r2: v => Math.round(v * 100) / 100,
+  r3: v => Math.round(v * 1000) / 1000,
+  // Pr = wynik buildRoute() z modelu
+  project(Pr) {
+    const U = PS.util, M = PS.model, net = PSB.netOf(Pr.g), grav = net.flow === 'grawitacyjna';
+    const p = M.newProject(Object.assign({ name: 'Owintar etap I – ' + Pr.g.label, scaleH: 500, scaleV: 100, zMin: 0.8, zMax: 6 }, net));
+    p.sheetInfo = Object.assign({}, p.sheetInfo || {}, {
+      office: 'PWP', branch: 'Sanitarna', designer: 'mgr inż. Aleksander Bury', license: 'MAP/0195/POOS/11',
+      phase: 'NADZÓR AUTORSKI', phaseCode: 'NA', date: new Date().toLocaleDateString('pl-PL'), investor: 'Gmina Miasta Tarnowa – ZDiK w Tarnowie',
+      title: 'PROFIL PODŁUŻNY – ' + Pr.g.label.replace(/\s*\(.*\)\s*$/, '').toUpperCase(),
+      investment: 'Rozbudowa węzła komunikacyjnego w rejonie Owintaru – etap I', address: 'Tarnów',
+    });
+    const f = M.newProfile({ name: 'Profil' });
+    const nameAt = k => {
+      const c = Pr.ch[k], w = Pr.wl.filter(q => Math.abs(q.c - c) < Math.max(q.r, 0.6) + 0.25 && q.kind === 'proj').sort((a, b) => Math.abs(a.c - c) - Math.abs(b.c - c))[0];
+      if (w) return { name: w.lab, type: 'Studnia', dn: PSB.r2(2 * w.r), well: w };
+      const lg = Pr.legs[Math.min(k, Pr.legs.length - 1)], nm = (lg.desc.split('  ')[0] || '').split('–');
+      const nmA = k < Pr.legs.length ? nm[0] : (Pr.legs[k - 1].desc.split('  ')[0] || '').split('–').pop();
+      return { name: (nmA || '').trim(), type: grav ? 'Studnia' : 'Węzeł', dn: grav ? 1.2 : 0 };
+    };
+    Pr.nodes.forEach((n, k) => {
+      const [x, y, z] = n, info = nameAt(k), ti = terAt(x, y), tp = projAt(x, y);
+      const rIn = PSB.pipe(Pr.legs[Math.max(k - 1, 0)]).dn / 2, rOut = k < Pr.legs.length ? PSB.pipe(Pr.legs[k]).dn / 2 : rIn; // z modelu = oś, dno = oś − DN/2
+      const pt = M.newPoint({
+        name: info.name, kind: 'node', type: info.type, dist: PSB.r3(Pr.ch[k]), x: PSB.r3(x + D.origin[0]), y: PSB.r3(y + D.origin[1]),
+        ti: ti === null ? null : PSB.r2(ti), tp: tp === null ? (ti === null ? null : PSB.r2(ti)) : PSB.r2(tp), dn: info.dn,
+      });
+      if (grav) { pt.inv = PSB.r2(z - rIn); if (Math.abs(rOut - rIn) > 1e-3) pt.invOut = PSB.r2(z - rOut); }
+      else pt.inv = PSB.r2(z);
+      if (k > 0) { const pm = PSB.pipe(Pr.legs[k - 1]); pt.pipeDn = pm.dn; pt.pipeMat = pm.mat; }
+      f.points.push(pt);
+    });
+    // teren pośredni (co ok. 2 m)
+    const nd = new Set(Pr.ch.map(c => Math.round(c * 10)));
+    let last = -9;
+    (Pr.surf.te || []).forEach((q, i) => {
+      if (q[0] - last < 2 || nd.has(Math.round(q[0] * 10))) return; last = q[0];
+      const pr = Pr.surf.pr && Pr.surf.pr[i];
+      f.points.push(M.newPoint({ kind: 'terrain', type: '', name: '', dist: PSB.r3(q[0]), ti: PSB.r2(q[1]), tp: pr ? PSB.r2(pr[1]) : PSB.r2(q[1]), dn: null }));
+    });
+    f.points.sort((a, b) => a.dist - b.dist);
+    const nn = f.points.filter(q => q.kind === 'node'); f.name = (nn[0].name || '?') + ' – ' + (nn[nn.length - 1].name || '?');
+    // skrzyżowania z uzbrojeniem z modelu
+    (Pr.cr || []).forEach(c => {
+      if (c.c < 0.05 || c.c > Pr.L - 0.05) return;
+      const u = PSB.utilOf(c), lik = c.kind === 'istn_likw';
+      f.crossings.push(M.newCrossing({
+        dist: PSB.r3(c.c), status: c.kind === 'proj' ? 'Proj.' : 'Istn.', type: u.type, sub: u.sub, dn: PSB.r3(2 * c.r),
+        elev: PSB.r2(c.z - c.rv), desc: '', desc2: lik ? 'DO LIKWIDACJI' : '', ref: 'model: ' + c.gl,
+      }));
+    });
+    p.profiles.push(f);
+    return p;
+  },
+};
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
@@ -751,13 +3433,48 @@ function drawProfile(Pr,paper,exSel){
 // ===================== okno profilu + PDF =====================
 let curProf=null;
 const pm=document.getElementById('pmodal'), psvg=document.getElementById('psvg'), pPaper=document.getElementById('pPaper'), pEx=document.getElementById('pEx');
-function renderProf(){ if(!curProf) return; psvg.innerHTML=drawProfile(curProf,pPaper.value,pEx.value); applyZoom(); }
+const pLay=document.getElementById('pLay'); let pkCache=null;
+const isPK=()=>pLay.value==='pk' && curProf && curProf.mode==='route';
+function pkBuild(){ if(pkCache && pkCache.Pr===curProf) return pkCache; const p=PSB.project(curProf), f=p.profiles[0], calc=PS.model.compute(p,f);
+  pkCache={Pr:curProf, p, f, calc, sheets:PS.render.buildSheets(p,f,calc)}; return pkCache; }
+function renderProf(){ if(!curProf) return; const pk=isPK();
+  pLay.disabled = curProf.mode!=='route'; if(curProf.mode!=='route') pLay.value='pom';
+  document.querySelectorAll('.pomOnly').forEach(e=>e.hidden=pk); document.querySelectorAll('.pkOnly').forEach(e=>e.hidden=!pk);
+  if(pk){ try{ const k=pkBuild(); psvg.innerHTML=k.sheets.map(s=>PS.render.toSVG(s,1)).join('');
+      const dg=(k.calc.diag||[]).filter(d=>/Kolizja|Spadek|Przykrycie|głęb/i.test(d.msg)).length; document.getElementById('pMsg').textContent=`${k.sheets.length} ark. · ${k.f.points.filter(q=>q.kind==='node').length} węzłów · ${k.f.crossings.length} skrzyżowań`+(dg?` · uwagi: ${dg}`:''); }
+    catch(e){ console.error(e); psvg.innerHTML=''; document.getElementById('pMsg').textContent='Błąd układu PK: '+e.message; } }
+  else psvg.innerHTML=drawProfile(curProf,pPaper.value,pEx.value);
+  applyZoom(); }
+pLay.onchange=()=>{ try{ localStorage.setItem('owintar_play',pLay.value); }catch(e){} renderProf(); };
+try{ const v=localStorage.getItem('owintar_play'); if(v) pLay.value=v; }catch(e){}
+const stamp=()=>{ const d=new Date(), p2=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}`; };
+const pkName=()=>{ const k=pkBuild(); return ('Profil_'+k.f.name).replace(/[^\wąćęłńóśźżĄĆĘŁŃÓŚŹŻ.-]+/g,'_').replace(/_+/g,'_'); };
+async function saveFile(fn, blob){ const pMsg=document.getElementById('pMsg'); let dlc=null; try{ dlc = window.claude&&window.claude.use ? await window.claude.use('downloads') : null; }catch(e){ dlc=null; }
+  if(dlc){ try{ await dlc.save({filename:fn, data:blob}); pMsg.textContent='Zapisano: '+fn; }catch(e){ pMsg.textContent = e&&e.code==='declined' ? 'Zapis anulowany.' : 'Nie udało się zapisać pliku ('+(e&&e.code||'błąd')+').'; } return; }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fn; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500); pMsg.textContent='Zapisano: '+fn; }
+document.getElementById('pDxf').onclick=()=>{ if(!isPK()) return; const k=pkBuild(); let x=0; const prims=[];
+  for(const sh of k.sheets){ prims.push(...PS.render.shift(sh.prims,x,0)); x+=sh.len+20; }
+  const dxf=PS.render.toDXF({prims, bounds:{minX:0,minY:0,maxX:x-20,maxY:PS.model.frame(k.p).height}});
+  saveFile(pkName()+'_'+stamp()+'.dxf', new Blob([dxf],{type:'application/dxf'})); };
+document.getElementById('pPsj').onclick=()=>{ if(!isPK()) return; const k=pkBuild();
+  saveFile(pkName()+'_'+stamp()+'.psieci.json', new Blob([JSON.stringify({projects:[k.p],pi:0,fi:0},null,1)],{type:'application/json'})); };
+function pkPdf(){ const pMsg=document.getElementById('pMsg'); if(!window.jspdf){ pMsg.textContent='Brak biblioteki PDF – sprawdź połączenie z internetem.'; return; }
+  const k=pkBuild(); pMsg.textContent='Przygotowuję PDF…'; let pdf=null, i=0;
+  const next=()=>{ if(i>=k.sheets.length){ saveFile(pkName()+'_'+stamp()+'.pdf', pdf.output('blob')); return; }
+    const sh=k.sheets[i++], W=sh.bounds.maxX-sh.bounds.minX, H=sh.bounds.maxY-sh.bounds.minY, dpi=W>500?150:200;
+    const cw=Math.round(W/25.4*dpi), chh=Math.round(H/25.4*dpi), img=new Image();
+    img.onload=()=>{ const cv=document.createElement('canvas'); cv.width=cw; cv.height=chh; const cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cw,chh); cx.drawImage(img,0,0,cw,chh);
+      const o=W>=H?'landscape':'portrait'; if(!pdf) pdf=new jspdf.jsPDF({orientation:o,unit:'mm',format:[W,H],compress:true}); else pdf.addPage([W,H],o);
+      pdf.addImage(cv.toDataURL('image/jpeg',0.92),'JPEG',0,0,W,H,undefined,'FAST'); next(); };
+    img.onerror=()=>{ pMsg.textContent='Nie udało się przygotować PDF.'; };
+    img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(PS.render.toSVG(sh,1,{print:true})); };
+  next(); }
 let pZoom=1; const applyZoom=()=>{ const sv=psvg.querySelector('svg'); if(sv) sv.style.width=(pZoom*100)+'%'; };
 document.getElementById('pZp').onclick=()=>{ pZoom=Math.min(4,pZoom*1.5); applyZoom(); }; document.getElementById('pZm').onclick=()=>{ pZoom=Math.max(1,pZoom/1.5); applyZoom(); };
-function openProf(Pr){ curProf=Pr; pZoom=NARROW.matches?2.25:1; document.getElementById('pMsg').textContent=''; closeSheet(); pPaper.value = Pr.L>110||Pr.cr.length>45 ? 'A3':'A4'; pm.hidden=false; renderProf(); }
+function openProf(Pr){ curProf=Pr; pkCache=null; pZoom=NARROW.matches?2.25:1; document.getElementById('pMsg').textContent=''; closeSheet(); pPaper.value = Pr.L>110||Pr.cr.length>45 ? 'A3':'A4'; pm.hidden=false; renderProf(); }
 pPaper.onchange=renderProf; pEx.onchange=renderProf; document.getElementById('pClose').onclick=()=>{pm.hidden=true;};
 document.getElementById('pPdf').onclick=()=>{
-  if(!curProf) return; const paper=pPaper.value, [W,H]=PAPER[paper], svg=drawProfile(curProf,paper,pEx.value);
+  if(!curProf) return; if(isPK()){ pkPdf(); return; } const paper=pPaper.value, [W,H]=PAPER[paper], svg=drawProfile(curProf,paper,pEx.value);
   const pMsg=document.getElementById('pMsg'); if(!window.jspdf){ pMsg.textContent='Brak biblioteki PDF – sprawdź połączenie z internetem.'; return; } pMsg.textContent='Przygotowuję PDF…';
   const dpi=paper==='A3'?180:220, cw=Math.round(W/25.4*dpi), chh=Math.round(H/25.4*dpi); const img=new Image();
   img.onload=()=>{ const cv=document.createElement('canvas'); cv.width=cw; cv.height=chh; const cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cw,chh); cx.drawImage(img,0,0,cw,chh);
