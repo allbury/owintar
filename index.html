@@ -2842,7 +2842,7 @@ const PSB = {
       const u = PSB.utilOf(c), lik = c.kind === 'istn_likw';
       f.crossings.push(M.newCrossing({
         dist: PSB.r3(c.c), status: c.kind === 'proj' ? 'Proj.' : 'Istn.', type: u.type, sub: u.sub, dn: PSB.r3(2 * c.r),
-        elev: PSB.r2(c.z - c.rv), desc: '', desc2: lik ? 'DO LIKWIDACJI' : '', ref: 'model: ' + c.gl,
+        elev: PSB.r2(c.z - c.rv), desc: '^', desc2: lik ? 'DO LIKWIDACJI' : '', ref: 'model: ' + c.gl,
       }));
     });
     p.profiles.push(f);
@@ -3517,12 +3517,21 @@ function drawProfile(Pr,paper,exSel){
   T(tx+2,ty+23.6,'przed robotami potwierdzić odkrywkami. Opracowanie pomocnicze – nie zastępuje projektu.',{fs:1.85,col:'#444'});
   // mapka lokalizacji (z boku, nad tabelką): podkład drogowy, mapa, sieci, trasa profilu
   const ty0=PH-M-TB, mp={x:x1-MAPW, y:yBandTop-MAPH-3, w:MAPW, h:MAPH};
+  miniMap(o,T,Ln,Pl,Pr,mp);
+  // legenda (między mapką a tabliczką)
+  const lx=ML, lw=tx-lx-6, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
+  wrapTxt('Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy). Mapka lokalizacji: podkład – nawierzchnie i krawężniki drogi proj., mapa do c.p., sieci; czerwona linia – trasa profilu.',Math.max(30,Math.floor(lw/1.0)),4).forEach((s,i)=>T(lx,ly+10+i*3.1,s,{fs:2.0}));
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PW} ${PH}" width="${PW}mm" height="${PH}mm">${o.join('')}</svg>`;
+}
+
+// mapka lokalizacji profilu (współdzielona: profil pomocniczy i układ PK)
+function miniMap(o,T,Ln,Pl,Pr,mp){
   o.push(`<rect x="${mp.x}" y="${mp.y}" width="${mp.w}" height="${mp.h}" fill="#fff" stroke="#111" stroke-width="0.35"/>`);
   { const xs_=Pr.pts.map(p=>p[0]), ys_=Pr.pts.map(p=>p[1]); const bx0=Math.min(...xs_), bx1=Math.max(...xs_), by0=Math.min(...ys_), by1=Math.max(...ys_);
     const cx=(bx0+bx1)/2, cy=(by0+by1)/2, ih=mp.h-6, iw=mp.w-2;
     const k=Math.min(iw/Math.max((bx1-bx0)*1.25,30), ih/Math.max((by1-by0)*1.25,30));
     const MX=x=>mp.x+1+iw/2+(x-cx)*k, MY=y=>mp.y+5+ih/2-(y-cy)*k, hx=iw/2/k+2, hy=ih/2/k+2, inb=(x,y)=>Math.abs(x-cx)<hx&&Math.abs(y-cy)<hy;
-    o.push(`<clipPath id="mpc"><rect x="${mp.x+0.2}" y="${mp.y+5}" width="${mp.w-0.4}" height="${mp.h-5.2}"/></clipPath><g clip-path="url(#mpc)">`);
+    const cid="mpc"+Math.random().toString(36).slice(2,7); o.push(`<clipPath id="${cid}"><rect x="${mp.x+0.2}" y="${mp.y+5}" width="${mp.w-0.4}" height="${mp.h-5.2}"/></clipPath><g clip-path="url(#${cid})">`);
     const R=D.road; if(R){ const pal=R.classes.map(c=>c.c); const pp=[];
       R.t.forEach((t,ti)=>{ const v0=R.v[t[0]]; if(!inb(v0[0],v0[1])) return; pp.push(`<path d="M${t.map(q=>MX(R.v[q][0]).toFixed(2)+' '+MY(R.v[q][1]).toFixed(2)).join('L')}Z" fill="${pal[R.c[ti]]}" fill-opacity="0.35" stroke="${pal[R.c[ti]]}" stroke-opacity="0.35" stroke-width="0.05"/>`); });
       o.push(pp.join('')); R.lines.forEach(l=>{ if(!l.p.some(q=>inb(q[0],q[1]))) return; Pl(l.p.map(q=>[MX(q[0]),MY(q[1])]),'#4a4a4a',0.14); }); }
@@ -3545,19 +3554,49 @@ function drawProfile(Pr,paper,exSel){
     const nice=[5,10,20,25,50,100,200,250,500]; const sl=nice.find(v=>v*k>=14)||nice[nice.length-1]; const sx0=mp.x+mp.w-4-sl*k, sy0=mp.y+mp.h-2.5;
     o.push(`<rect x="${sx0.toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#111"/><rect x="${(sx0+sl*k/2).toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#fff" stroke="#111" stroke-width="0.15"/>`);
     T(sx0,sy0-1.6,'0',{fs:1.9,anc:'middle'}); T(sx0+sl*k,sy0-1.6,sl+' m',{fs:1.9,anc:'middle'}); }
-  // legenda (między mapką a tabliczką)
-  const lx=ML, lw=tx-lx-6, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
-  wrapTxt('Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy). Mapka lokalizacji: podkład – nawierzchnie i krawężniki drogi proj., mapa do c.p., sieci; czerwona linia – trasa profilu.',Math.max(30,Math.floor(lw/1.0)),4).forEach((s,i)=>T(lx,ly+10+i*3.1,s,{fs:2.0}));
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PW} ${PH}" width="${PW}mm" height="${PH}mm">${o.join('')}</svg>`;
 }
+function miniMapSVG(Pr,w,h){ const o=[]; const T=(x,y,t,a={})=>o.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${a.fs||2.4}" text-anchor="${a.anc||'start'}" fill="${a.col||'#111'}" font-weight="${a.w||400}" font-family="Arial,Helvetica,sans-serif">${esc(t)}</text>`);
+  const Ln=(a,b,c,d,col='#111',ww=0.2)=>o.push(`<line x1="${a.toFixed(2)}" y1="${b.toFixed(2)}" x2="${c.toFixed(2)}" y2="${d.toFixed(2)}" stroke="${col}" stroke-width="${ww}"/>`);
+  const Pl=(pp,col,ww)=>o.push(`<polyline points="${pp.map(p=>p[0].toFixed(2)+','+p[1].toFixed(2)).join(' ')}" fill="none" stroke="${col}" stroke-width="${ww}"/>`);
+  miniMap(o,T,Ln,Pl,Pr,{x:0.2,y:0.2,w:w-0.4,h:h-0.4});
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w*8}" height="${h*8}">${o.join('')}</svg>`; }
 
 // ===================== okno profilu + PDF =====================
 let curProf=null;
 const pm=document.getElementById('pmodal'), psvg=document.getElementById('psvg'), pPaper=document.getElementById('pPaper'), pEx=document.getElementById('pEx');
 const pLay=document.getElementById('pLay'); let pkCache=null;
 const isPK=()=>pLay.value==='pk' && curProf && curProf.mode==='route';
-function pkBuild(){ if(pkCache && pkCache.Pr===curProf) return pkCache; const p=PSB.project(curProf), f=p.profiles[0], calc=PS.model.compute(p,f);
-  pkCache={Pr:curProf, p, f, calc, sheets:PS.render.buildSheets(p,f,calc)}; return pkCache; }
+// PK: jeden poziom porównawczy na całym profilu (tylko projekty z modelu – flaga _onePP)
+(function(){ const o=PS.model.sheetPP; PS.model.sheetPP=function(project){ if(project&&project._onePP&&project.ppFixed!=null) return {pp:project.ppFixed,changed:false,fits:true}; return o.apply(this,arguments); }; })();
+function pkOnePP(p,f,calc){ const vS=1000/p.scaleV; let pp=PS.model.minLevel(calc.pts)-1;
+  for(const [n,c] of calc.nodeCalc){ const bot=Math.min(...[c.invIn,c.invOut].filter(v=>v!==null&&v!==undefined)); if(isFinite(bot)) pp=Math.min(pp, bot-(PS.render.nodeLabel(n,c).length*1.36+8)/vS); }
+  (calc.crosses||[]).forEach(k=>{ if(k.elev!==null&&k.elev!==undefined) pp=Math.min(pp,k.elev-0.6); });
+  p.ppFixed=Math.floor(pp); p._onePP=true; }
+// PK: arkusz 297 × (420 | 580 | 765 | …), tabliczka jak w profilu pomocniczym, mapka lokalizacji nad tabliczką
+function pkPost(sheets,Pr,p){ return sheets.map(sh=>{ const H=297, keep=sh.prims.filter(q=>!['Ramka','Tabelka','Logo'].includes(q.l));
+  // opisy skrzyżowań nad terenem – rozsunięcie w poziomie z odnośnikami (bez nachodzenia na siebie)
+  { const V=keep.filter(q=>q.t==='text'&&q.rot===90&&q.l==='Opis_skrz').sort((a,b)=>a.x-b.x); const gap=2.6;
+    if(V.length){ const xs=V.map(q=>q.x); for(let it=0;it<300;it++){ let mv=false; for(let i=1;i<xs.length;i++){ if(xs[i]-xs[i-1]<gap-1e-6){ const d=(gap-(xs[i]-xs[i-1]))/2; xs[i-1]-=d; xs[i]+=d; mv=true; } } if(!mv) break; }
+      V.forEach((q,i)=>{ if(Math.abs(xs[i]-q.x)>0.05){ const y0=q.y; keep.push({t:'line',l:'Linie_odn',x1:q.x+0.6,y1:y0-1.5,x2:xs[i]+0.6,y2:y0+3,w:'hair'}); q.x=xs[i]; q.y=y0+4; } }); } }
+  let xr=0; keep.forEach(q=>{ const xs=q.t==='line'?[q.x1,q.x2]:q.t==='pline'?q.pts.map(z=>z[0]):q.t==='circle'?[q.cx+q.r]:q.t==='rect'||q.t==='image'?[q.x+q.w]:q.t==='text'?[q.x+(q.rot?q.h:q.s.length*q.h*0.62)]:[q.x||0]; xs.forEach(v=>{ if(isFinite(v)) xr=Math.max(xr,v); }); });
+  const COL=112, need=xr+8+COL+5; let L=420; if(need>420){ L=580; while(L<need) L+=185; }
+  const P=keep.slice(), line=(x1,y1,x2,y2,w='thin',l='Tabelka')=>P.push({t:'line',l,x1,y1,x2,y2,w}), text=(x,y,h,s_,al='l')=>P.push({t:'text',l:'Tabelka',x,y,h,s:String(s_),rot:0,al});
+  P.push({t:'rect',l:'Ramka',x:0,y:0,w:L,h:H,lw:'hair'},{t:'rect',l:'Ramka',x:25,y:5,w:L-30,h:H-10,lw:'mid'});
+  if(L>420) for(let fx=25+185; fx<L-5; fx+=185) line(fx,0,fx,5,'hair','Ramka');
+  const tw=110, th=30, tx=L-5-tw, ty=5; P.push({t:'rect',l:'Tabelka',x:tx,y:ty,w:tw,h:th,lw:'mid'});
+  text(tx+2,ty+th-4.2,2.0,'Owintar etap I, Tarnów – nadzór autorski, branża sanitarna');
+  text(tx+2,ty+th-8.6,1.9,(Pr.title||'').replace('Profil pomocniczy','Profil podłużny').slice(0,70));
+  text(tx+2,ty+th-12.8,1.8,`Skala: pozioma 1:${p.scaleH}, pionowa 1:${p.scaleV} · poz. por. ${PS.util.fix(p.ppFixed,2)} m n.p.m.`);
+  text(tx+2,ty+th-17,1.8,`Opracował: mgr inż. Aleksander Bury · ${new Date().toLocaleDateString('pl-PL')}`);
+  text(tx+2,ty+th-21.5,1.5,'Rzędne wg modelu 3D: sieci proj. – PW i karty KNA, istn. – mapa do c.p. (orientacyjne);');
+  text(tx+2,ty+th-24.4,1.5,'przed robotami potwierdzić odkrywkami. Opracowanie pomocnicze – nie zastępuje projektu.');
+  text(tx+2,ty+2,1.6,`Format ${H}×${L}`);
+  const mh=Math.min(COL, H-5-(ty+th+4)-2); const svg=miniMapSVG(Pr,COL,mh);
+  P.push({t:'rect',l:'Tabelka',x:L-5-COL,y:ty+th+4,w:COL,h:mh,lw:'thin'});
+  P.push({t:'image',l:'Logo',x:L-5-COL,y:ty+th+4,w:COL,h:mh,href:'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)});
+  return Object.assign({},sh,{prims:P,bounds:{minX:0,minY:0,maxX:L,maxY:H},len:L}); }); }
+function pkBuild(){ if(pkCache && pkCache.Pr===curProf) return pkCache; const p=PSB.project(curProf), f=p.profiles[0]; p.frame=Object.assign({},p.frame||{},{maxLen:2985,minLen:420,page:185,title:120}); let calc=PS.model.compute(p,f); pkOnePP(p,f,calc);
+  pkCache={Pr:curProf, p, f, calc, sheets:pkPost(PS.render.buildSheets(p,f,calc),curProf,p)}; return pkCache; }
 function renderProf(){ if(!curProf) return; const pk=isPK();
   pLay.disabled = curProf.mode!=='route'; if(curProf.mode!=='route') pLay.value='pom';
   document.querySelectorAll('.pomOnly').forEach(e=>e.hidden=pk); document.querySelectorAll('.pkOnly').forEach(e=>e.hidden=!pk);
