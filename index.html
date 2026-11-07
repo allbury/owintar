@@ -3343,6 +3343,34 @@ const PAPER={A4:[297,210],A3:[420,297]};
 const HS=[50,100,200,250,500,1000,2000,2500,5000], VS=[10,20,25,50,100,200,250,500,1000];
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const f2=v=>(v===null||v===undefined||isNaN(v))?'–':v.toFixed(2).replace('.',',');
+// ---- skróty opisów na profilu pomocniczym ----
+const ABBR_RULES=[
+ [/\s*\((?:szkic|przyjęto|do modelu|bez pomiaru|pomiar|opis studni|teren|inne opracowanie|torkret|30\.0?3\.2023)[^()]*(?:\([^()]*\)[^()]*)*\)/gi,''],
+ [/wg mapy do celów projektowych/gi,'wg MDCP'],[/–\s*pomiar wykonawcy/gi,'– pom. wyk.'],[/inwentaryzacja/gi,'inw.'],
+ [/Kable\/kanalizacja telekom\./g,'tel.'],[/kanalizacja kablowa/gi,'kan. kabl.'],[/kanał technologiczny/gi,'kan. techn.'],[/sieć telekom\./gi,'sieć tel.'],
+ [/Kable energ\./g,'kab. en.'],[/Kable nN/g,'kab. nN'],[/\bkabel\b/gi,'kab.'],[/oświetlenie/gi,'ośw.'],[/oświetl\./gi,'ośw.'],
+ [/Kanalizacja istn\./g,'kan. istn.'],[/Ciepłociąg/g,'ciepł.'],[/Wodociąg/g,'wod.'],[/^Gaz\b/g,'gaz'],[/Inne \/ niezident\./g,'niezident.'],
+ [/ogólnospławna/gi,'ogólnospł.'],[/sanitarna/gi,'san.'],[/deszczowa/gi,'deszcz.'],[/nieokreślona/gi,'nieokr.'],[/Ø\s*nieznana/gi,'Ø ?'],
+ [/projektowana|projektowany/gi,'proj.'],[/rozbiórka, przebudowa na/gi,'rozb., przeb. na'],[/do likwidacji/gi,'do likw.'],[/likwidacja/gi,'likw.'],
+ [/wypełnienie pianobetonem/gi,'pianobeton'],[/zaślepienie/gi,'zaśl.'],[/pozostaje\s*\(nie do demontażu[^)]*\)/gi,'pozost. (bez demont.)'],
+ [/gł\. normatywna/gi,'gł. norm.'],[/Studnia istn\.\s*\((?:studnia|studzienka),\s*(\w+)\)/g,'st. istn. $1'],[/Zasuwa gazowa/g,'zas. gaz.'],[/Zasuwa wodociągowa/g,'zas. wod.'],
+ [/Kratka ściekowa\s*\(wpust istn\.\)/g,'wpust istn.'],[/dół na osi przewodu/gi,'oś'],[/zagłębienie umowne/gi,'zagł. um.'],[/\bteren\b/gi,'t.'],[/\bwłaz\b/gi,'wł.'],
+ [/dno brak\s*–\s*przyjęto\s*([\d,.]+)\s*m p\.p\.t\./gi,'dno przyj. $1 m ppt'],[/głęb\./gi,'gł.'],[/prefabrykowana/gi,'prefabr.'],
+ [/\s*\(szkło bezpieczne[^)]*\)/gi,' (szkło)'],[/Zadaszenie/g,'zadasz.'],[/okładzina ściany/gi,'okł. ściany'],[/Przeszklenie nad:/g,'przeszkl.'],
+ [/płyta denna/gi,'pł. denna'],[/płyta górna/gi,'pł. górna'],[/płyta dolna/gi,'pł. dolna'],[/kształtownikiem/gi,'kształt.'],[/niezbrojony\s*\(wypełniający\)/gi,'niezbr.'],[/Pom\. techniczne/g,'pom. techn.'],
+ [/zespół zaporowy z zaworem upustowym/gi,'zesp. zap.-upust.'],[/zespół zaporowy/gi,'zesp. zap.'],[/góra skrzynki/gi,'góra skrz.'],[/na istn\./gi,'na istn.'],
+ [/istn,/g,'istn.'],[/\s*;\s*/g,'; '],[/\s{2,}/g,' '],[/\s+–\s*$/,'']];
+const abbr=t=>{ let s=String(t||''); ABBR_RULES.forEach(([r,v])=>{ s=s.replace(r,v); }); return s.trim(); };
+const crTxt=c=>{ const g=abbr(c.gl.split(' (')[0].split(' – ')[0]); let l=abbr(c.lab); const gl=g.toLowerCase();
+  if(l.toLowerCase().startsWith(gl)) l=l.slice(g.length).replace(/^\s*[·–-]?\s*/,'');
+  l=l.replace(/^(istn\.|proj\.)\s*/,m=>gl.includes(m.trim())?'':m);
+  l=l.replace(/^[–·-]\s*/,''); if(gl.includes(l.toLowerCase())) l='';
+  return g+(l?' · '+l:'')+' · oś '+f2(c.z); };
+const wlTxt=w=>{ const d=abbr(w.desc.replace(/\s+\((?:korekta|KNA)[^)]*\)/g,'')); return /^(st\.|zas\.|wpust|stud)/i.test(d)||w.kind!=='istn'? (w.kind==='istn'?d:'st. '+d) : 'st. istn.: '+d; };
+// zawijanie: słowa do wierszy o długości maks. n znaków, maks. m wierszy
+const wrapTxt=(t,n,m)=>{ const ws=t.split(' '), L=[]; let cur=''; for(const w of ws){ if(!cur) cur=w; else if((cur+' '+w).length<=n) cur+=' '+w; else { L.push(cur); cur=w; } } if(cur) L.push(cur);
+  if(L.length>m){ const k=L.slice(0,m); k[m-1]=(k[m-1]+' '+L.slice(m).join(' ')).slice(0,Math.max(4,n-1)).replace(/\s+\S*$/,'')+'…'; return k; }
+  return L.map(l=>l.length>n? l.slice(0,n-1)+'…' : l); };
 function drawProfile(Pr,paper,exSel){
   const [PW,PH]=PAPER[paper]; const M=10, HEAD=40, rows=Pr.mode==='route'?['Rzędna terenu istn.','Rzędna terenu proj.','Rzędna osi przewodu','Spadek, Ø, długość','Odległości']:['Rzędna terenu istn.','Rzędna terenu proj.','Odległości'];
   const RH=10, bandH=rows.length*RH, TB=26;
@@ -3385,18 +3413,25 @@ function drawProfile(Pr,paper,exSel){
     o.push(`<polygon points="${a},${Y(l.z0+l.rv)} ${b},${Y(l.z1+l.rv)} ${b},${Y(l.z1-l.rv)} ${a},${Y(l.z0-l.rv)}" fill="${col}" fill-opacity="0.45" stroke="${col}" stroke-width="0.35"/>`);
     Ln(a,Y(l.z0),b,Y(l.z1),col,0.15,'1.2 0.6'); }); }
   // przecięcia z sieciami – elipsy + opisy pionowe
-  const labs=[]; Pr.cr.forEach(c=>labs.push({c:c.c, z:c.z+c.rv, txt:`${c.gl.split(' (')[0].split(' – ')[0]} · ${c.lab} · oś ${f2(c.z)}`, col:c.col}));
-  Pr.wl.forEach(w=>labs.push({c:w.c, z:w.zt, txt:(w.kind==='istn'?'studnia istn.: ':'studnia ')+w.desc.replace(/\s+\(.*?\)/g,'').slice(0,70), col:w.kind==='istn'?'#8b5a2b':'#2b5aa0'}));
-  Pr.kn.forEach(k=>labs.push({c:(k.c0+k.c1)/2, z:k.zt, txt:k.desc.slice(0,70), col:'#5d3a17'}));
-  { const seen=new Set(); (Pr.so||[]).forEach(o=>{ if(seen.has(o.key)) return; seen.add(o.key); const r=o.runs[0], q=r[Math.floor(r.length/2)]; labs.push({c:q[0], z:q[2], txt:o.key.slice(0,70), col:'#4a4740'}); }); }
+  const labs=[]; Pr.cr.forEach(c=>labs.push({c:c.c, z:c.z+c.rv, txt:crTxt(c), col:c.col}));
+  Pr.wl.forEach(w=>labs.push({c:w.c, z:w.zt, txt:wlTxt(w), col:w.kind==='istn'?'#8b5a2b':'#2b5aa0'}));
+  Pr.kn.forEach(k=>labs.push({c:(k.c0+k.c1)/2, z:k.zt, txt:abbr(k.desc), col:'#5d3a17'}));
+  { const seen=new Set(); (Pr.so||[]).forEach(o=>{ if(seen.has(o.key)) return; seen.add(o.key); const r=o.runs[0], q=r[Math.floor(r.length/2)]; labs.push({c:q[0], z:q[2], txt:abbr(o.key), col:'#4a4740'}); }); }
   Pr.cr.forEach(c=>{ const rx=Math.max(c.r*sx,0.35), ry=Math.max(c.rv*sy,0.35);
     o.push(`<ellipse cx="${X(c.c).toFixed(2)}" cy="${Y(c.z).toFixed(2)}" rx="${rx.toFixed(2)}" ry="${ry.toFixed(2)}" fill="${c.col}" fill-opacity="${c.kind==='istn_likw'?0.25:0.75}" stroke="#222" stroke-width="0.15" ${c.kind==='istn_likw'?'stroke-dasharray="0.6 0.4"':''}/>`); });
-  labs.sort((a,b)=>a.c-b.c); const gap=2.9; const xs=labs.map(l=>X(l.c));
-  for(let it=0;it<200;it++){ let mv=false; for(let i=1;i<xs.length;i++){ if(xs[i]-xs[i-1]<gap){ const d=(gap-(xs[i]-xs[i-1]))/2; xs[i-1]-=d; xs[i]+=d; mv=true; } } if(!mv) break; }
-  const shift=Math.max(0,x0+2-xs[0]||0); for(let i=0;i<xs.length;i++) xs[i]+=shift; const over=xs.length? xs[xs.length-1]-(x1-1):0; if(over>0) for(let i=0;i<xs.length;i++) xs[i]-=over;
+  labs.sort((a,b)=>a.c-b.c);
+  // opisy pionowe: długość wiersza = wysokość pasa opisów; zawijanie do 3 wierszy; czcionka zmniejszana, gdy brak miejsca w poziomie
+  const LABLEN=LAB-3, availW=x1-1-(x0+2); let lfs=2.0;
+  const fit=fs=>{ const n=Math.max(12,Math.floor(LABLEN/(fs*0.5))); labs.forEach(l=>{ l.lines=wrapTxt(l.txt,n,3); l.w=l.lines.length*fs*1.12+0.5; }); return labs.reduce((s,l)=>s+l.w,0); };
+  while(fit(lfs)>availW && lfs>1.4) lfs=+(lfs-0.1).toFixed(2);
+  if(labs.reduce((s,l)=>s+l.w,0)>availW){ labs.forEach(l=>{ l.lines=wrapTxt(l.txt,Math.max(12,Math.floor(LABLEN/(lfs*0.5))),1); l.w=lfs*1.12+0.5; }); }
+  const xs=labs.map(l=>X(l.c)-l.w/2);
+  for(let it=0;it<400;it++){ let mv=false; for(let i=1;i<xs.length;i++){ const need=labs[i-1].w; if(xs[i]-xs[i-1]<need-1e-6){ const d=(need-(xs[i]-xs[i-1]))/2; xs[i-1]-=d; xs[i]+=d; mv=true; } } if(!mv) break; }
+  const shift=Math.max(0,x0+2-xs[0]||0); for(let i=0;i<xs.length;i++) xs[i]+=shift; const over=xs.length? xs[xs.length-1]+labs[labs.length-1].w-(x1-1):0; if(over>0) for(let i=0;i<xs.length;i++) xs[i]-=over;
   const yL=yPlotTop+LAB, topSurf=c=>{ let z=-1e9; Pr.surf.te.forEach(p=>{ if(Math.abs(p[0]-c)<Pr.L/60+0.5) z=Math.max(z,p[1]); }); return z; };
   labs.forEach((l,i)=>{ const xa=X(l.c), ya=Y(l.z), yk=Math.min(Y(Math.max(topSurf(l.c),l.z))-2, yL+2);
-    Ln(xa,ya,xa,yk,l.col,0.12,'0.6 0.4'); Ln(xa,yk,xs[i],yL,l.col,0.12); T(xs[i]+0.8,yL-1,l.txt,{fs:2.0,rot:-90,col:l.col}); });
+    const xm=xs[i]+l.w/2; Ln(xa,ya,xa,yk,l.col,0.12,'0.6 0.4'); Ln(xa,yk,xm,yL,l.col,0.12);
+    l.lines.forEach((s,k)=>T(xs[i]+0.25+lfs*0.82+k*lfs*1.12,yL-1,s,{fs:lfs,rot:-90,col:l.col})); });
   // pasy opisowe
   const by=r=>yBandTop+r*RH;
   o.push(`<rect x="${M}" y="${yBandTop}" width="${x1-M}" height="${bandH}" fill="none" stroke="#111" stroke-width="0.3"/>`);
