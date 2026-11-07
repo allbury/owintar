@@ -2787,7 +2787,7 @@ const PSB = {
   // opis odcinka z modelu: "S8–S7  PE-HD min. SN8 DN600 L=23,47 m  dno/oś …"
   pipe(lg) {
     const t = (lg.desc.split('  ')[1] || '');
-    const m = t.match(/DN\s*(\d+)/i), dz = t.match(/(\d+)\s*[x×]\s*[\d,.]+/);
+    const m = t.match(/DN\s*(\d+)/i) || t.match(/\b(\d{3,4})\/\d{3,4}\b/) || t.match(/[øØ]\s*(\d{2,4})\b/), dz = t.match(/(\d+)\s*[x×]\s*[\d,.]+/);
     const dn = m ? +m[1] / 1000 : dz ? +dz[1] / 1000 : PSB.r3(2 * lg.r);
     const mat = t.replace(/DN\s*\d+/gi, '').replace(/L\s*=\s*[\d,.]+\s*m/gi, '').replace(/\bmin\.\s*/gi, '').replace(/\s+/g, ' ').trim();
     return { dn, mat };
@@ -2806,6 +2806,8 @@ const PSB = {
     });
     const f = M.newProfile({ name: 'Profil' });
     const nameAt = k => {
+      const ni = Pr.nodeInfo && Pr.nodeInfo[k];
+      if (ni && ni.name) return { name: ni.name, type: ni.type, dn: ni.type === 'Węzeł' ? 0 : ni.dn };
       const c = Pr.ch[k], w = Pr.wl.filter(q => Math.abs(q.c - c) < Math.max(q.r, 0.6) + 0.25 && q.kind === 'proj').sort((a, b) => Math.abs(a.c - c) - Math.abs(b.c - c))[0];
       if (w) return { name: w.lab, type: 'Studnia', dn: PSB.r2(2 * w.r), well: w };
       const lg = Pr.legs[Math.min(k, Pr.legs.length - 1)], nm = (lg.desc.split('  ')[0] || '').split('–');
@@ -3054,7 +3056,7 @@ function build(){
   while(root.children.length) root.remove(root.children[0]);
   pickables.length = 0;
   D.groups.forEach(g=>{ const o=buildGroup(g); o.visible = groupsObj[g.id]? groupsObj[g.id].visible : defaultOn(g); groupsObj[g.id]=o; root.add(o); pickables.push(o.userData.inst||o); });
-  const wv = wellsObj? wellsObj.visible : true; wellsObj = wellsMesh(); wellsObj.visible = wv; root.add(wellsObj);
+  const wv = wellsObj? wellsObj.visible : true; wellsObj = wellsMesh(); wellsObj.visible = wv; root.add(wellsObj); pickables.push(wellsObj);
   marksObj = marksMesh(); root.add(marksObj); marksObj.children.forEach(c=>pickables.push(c));
   const wiv = wIstObj? wIstObj.visible : true; wIstObj = wellsIstnMesh(); wIstObj.visible=wiv; root.add(wIstObj); wIstObj.children.forEach(c=>pickables.push(c));
   const mdv = mdcpObj? mdcpObj.visible : false; mdcpObj = mdcpMesh(); mdcpObj.visible=mdv; root.add(mdcpObj);
@@ -3105,6 +3107,9 @@ function panel(){
       cb.addEventListener('change',()=>{groupsObj[g.id].visible=cb.checked;});
       b.appendChild(lab);
     });
+    if(t.startsWith('Sieci projektowane')){ const lw=document.createElement('label'); lw.htmlFor='L_wells';
+      lw.innerHTML='<input type="checkbox" id="L_wells"><span class="sw" style="background:#4a7fc0"></span><span>Studnie projektowane KD / KS (kliknij – dane studni)</span><span class="cnt">'+D.wells.length+'</span>';
+      const cw=lw.querySelector('input'); cw.checked=wellsObj?wellsObj.visible:true; cw.addEventListener('change',e=>{wellsObj.visible=e.target.checked;}); b.appendChild(lw); }
   });
   if(D.mdcp){ const bx=sec('Mapa do celów projektowych (xref)');
     const l0=document.createElement('label'); l0.htmlFor='L_mdcp';
@@ -3118,10 +3123,6 @@ function panel(){
     lt.innerHTML='<input type="checkbox" id="L_mdcp_top"><span class="sw" style="background:transparent"></span><span>Pokaż mapę nad modelem (bez zasłaniania)</span>';
     lt.querySelector('input').addEventListener('change',e=>{ mdcpTop=e.target.checked; mdcpApply(); }); bx.appendChild(lt); }
   const bu=sec('Studnie, uzbrojenie i zmiany KNA');
-  const lab=document.createElement('label'); lab.htmlFor='L_wells';
-  lab.innerHTML='<input type="checkbox" id="L_wells" checked><span class="sw" style="background:#4a7fc0"></span><span>Studnie KD / KS</span><span class="cnt">'+D.wells.length+'</span>';
-  lab.querySelector('input').addEventListener('change',e=>{wellsObj.visible=e.target.checked;});
-  bu.appendChild(lab);
   [['L_wist','#9c6b3f','Studnie istn. kanalizacji (mapa: właz / dno)',(D.wells_istn||[]).length,()=>wIstObj],['L_uzbr','#2e7d32','Uzbrojenie istn. z mapy (zasuwy, hydranty, kratki, studzienki tt, szafy, latarnie)',(D.uzbr||[]).length,()=>uzObj],['L_komw','#16a9c4','Komory wodociągowe (proj. wg PZT W, istn. z mapy)',(D.komw||[]).length,()=>komwObj],['L_kna','#a0703c','Komory i studnie KO w rzeczywistych wymiarach (KNA 07)',(D.knas||[]).length,()=>knaObj],['L_pin','#d00000','Pinezki zmian KNA (zaślepienia, regulatory, załamania)',(D.kpts||[]).length,()=>pinObj]].forEach(([id,col,txt,n,o])=>{
     const l=document.createElement('label'); l.htmlFor=id; l.innerHTML='<input type="checkbox" id="'+id+'" checked><span class="sw" style="background:'+col+'"></span><span>'+txt+'</span><span class="cnt">'+n+'</span>';
     l.querySelector('input').addEventListener('change',e=>{o().visible=e.target.checked;}); bu.appendChild(l); });
@@ -3318,6 +3319,9 @@ function solidsHits(pts,ch){ const out=[]; if(!(ppObj&&ppObj.visible)) return ou
 function knasHits(pts,ch){ const out=[]; if(!(knaObj&&knaObj.visible)) return out;
   (D.knas||[]).forEach(so=>{ const cs=[]; const pg=so.poly;
     for(let i=0;i<pts.length-1;i++) for(let k=0;k<pg.length;k++){ const r=segX(pts[i],pts[i+1],pg[k],pg[(k+1)%pg.length]); if(r) cs.push(ch[i]+r[0]*(ch[i+1]-ch[i])); }
+    const inside=(q)=>{ let c=false; for(let a=0,b=pg.length-1;a<pg.length;b=a++){ if(((pg[a][1]>q[1])!==(pg[b][1]>q[1]))&&(q[0]<(pg[b][0]-pg[a][0])*(q[1]-pg[a][1])/(pg[b][1]-pg[a][1])+pg[a][0])) c=!c; } return c; };
+    if(inside(pts[0])) cs.push(0); if(inside(pts[pts.length-1])) cs.push(ch[ch.length-1]);
+    if(cs.length===1) cs.push(cs[0]);
     if(cs.length>=2) out.push({c0:Math.min(...cs),c1:Math.max(...cs),zb:so.zb[0],zt:so.zt[0],lab:so.name.split(' – ')[0],desc:so.name}); });
   return out; }
 function sampleSurf(pts,ch){ const L=ch[ch.length-1], n=Math.max(40,Math.min(500,Math.round(L/0.5))), te=[], pr=[];
@@ -3369,8 +3373,16 @@ function buildRouteChain(g,chain,keepDir){
   if(!keepDir && nodes[0][2]>nodes[nodes.length-1][2]){ nodes.reverse(); chain.reverse(); chain.forEach(o=>o.fwd=!o.fwd); }
   const pts=nodes.map(n=>[n[0],n[1]]), ch=chainOf(pts);
   const legs=chain.map((o,k)=>({c0:ch[k],c1:ch[k+1],z0:nodes[k][2],z1:nodes[k+1][2],r:o.s[6],rv:vR(o.s),lab:SHORT(o.s[7]),desc:o.s[7]}));
+  const inPoly=(q,pg)=>{ let c=false; for(let a=0,b=pg.length-1;a<pg.length;b=a++){ if(((pg[a][1]>q[1])!==(pg[b][1]>q[1]))&&(q[0]<(pg[b][0]-pg[a][0])*(q[1]-pg[a][1])/(pg[b][1]-pg[a][1])+pg[a][0])) c=!c; } return c; };
+  const nodeInfo=nodes.map((n,k)=>{ const kn=(D.knas||[]).find(so=>inPoly([n[0],n[1]],so.poly));
+    if(kn){ const xs=kn.poly.map(q=>q[0]), ys=kn.poly.map(q=>q[1]); return {name:kn.name.split(' – ')[0], type:/okrągła/.test(kn.name)?'Studnia':'Komora', dn:+Math.min(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys)).toFixed(2), zt:kn.zt[0], zb:kn.zb[0]}; }
+    let best=null; (D.wells||[]).forEach(w=>{ const d=Math.hypot(w[0]-n[0],w[1]-n[1]); if(d<Math.max(w[4],0.6)+0.35&&(!best||d<best.d)) best={d,w}; });
+    if(best) return {name:SHORT(best.w[5]), type:'Studnia', dn:+(2*best.w[4]).toFixed(2), zt:best.w[3], zb:best.w[2]};
+    const o=k<chain.length?chain[k]:chain[k-1], nm=SHORT(o.s[7]).split('–'); let t='';
+    if(nm.length===2){ const first=(k<chain.length)? (o.fwd?nm[0]:nm[1]) : (o.fwd?nm[1]:nm[0]); t=first.trim(); }
+    return {name:t, type:'Węzeł', dn:0}; });
   const wl=[]; wellsAll().forEach(w=>{ const p=projOnPoly(pts,ch,[w.x,w.y]); if(p&&p.d<Math.max(w.r,0.6)+0.3) wl.push(Object.assign({c:p.c},w)); });
-  return {mode:'route', g, pts, ch, L:ch[ch.length-1], legs, nodes, surf:sampleSurf(pts,ch), cr:crossings(pts,ch,g.id), wl, kn:knasHits(pts,ch), so:solidsHits(pts,ch),
+  return {mode:'route', g, pts, ch, L:ch[ch.length-1], legs, nodes, nodeInfo, surf:sampleSurf(pts,ch), cr:crossings(pts,ch,g.id), wl, kn:knasHits(pts,ch), so:solidsHits(pts,ch),
           title:'Profil pomocniczy – '+g.label, sub:`${legs.length} odc. · długość ${fmt(ch[ch.length-1])} m · ${SHORT(legs[0].desc)} … ${SHORT(legs[legs.length-1].desc)}`}; }
 
 // ===================== rysunek SVG (mm) =====================
@@ -3408,9 +3420,10 @@ const wrapTxt=(t,n,m)=>{ const ws=t.split(' '), L=[]; let cur=''; for(const w of
   return L.map(l=>l.length>n? l.slice(0,n-1)+'…' : l); };
 function drawProfile(Pr,paper,exSel){
   const [PW,PH]=PAPER[paper]; const M=10, HEAD=40, rows=Pr.mode==='route'?['Rzędna terenu istn.','Rzędna terenu proj.','Rzędna osi przewodu','Spadek, Ø, długość','Odległości']:['Rzędna terenu istn.','Rzędna terenu proj.','Odległości'];
-  const RH=10, bandH=rows.length*RH, TB=paper==='A3'?52:42;
+  const RH=10, bandH=rows.length*RH, TB=30;
   const x0=M+HEAD, x1=PW-M, yBandTop=PH-M-TB-4-bandH, yPlotTop=M+8, LAB=Math.min(55,(yBandTop-yPlotTop)*0.42);
-  const plotW=x1-x0-4;
+  const MAPW=paper==='A3'?112:96, MAPH=Math.min(paper==='A3'?112:100, yBandTop-yPlotTop-6), xP=x1-MAPW-6;
+  const plotW=xP-x0-4;
   // skala pozioma
   let hs=HS.find(s=>Pr.L*1000/s<=plotW)||HS[HS.length-1]; const sx=1000/hs;
   // zakres rzędnych
@@ -3456,17 +3469,28 @@ function drawProfile(Pr,paper,exSel){
     o.push(`<ellipse cx="${X(c.c).toFixed(2)}" cy="${Y(c.z).toFixed(2)}" rx="${rx.toFixed(2)}" ry="${ry.toFixed(2)}" fill="${c.col}" fill-opacity="${c.kind==='istn_likw'?0.25:0.75}" stroke="#222" stroke-width="0.15" ${c.kind==='istn_likw'?'stroke-dasharray="0.6 0.4"':''}/>`); });
   labs.sort((a,b)=>a.c-b.c);
   // opisy pionowe: długość wiersza = wysokość pasa opisów; zawijanie do 3 wierszy; czcionka zmniejszana, gdy brak miejsca w poziomie
-  const LABLEN=LAB-3, availW=x1-1-(x0+2); let lfs=2.0;
+  const LABLEN=LAB-3, availW=xP-1-(x0+2); let lfs=2.0;
   const fit=fs=>{ const n=Math.max(12,Math.floor(LABLEN/(fs*0.5))); labs.forEach(l=>{ l.lines=wrapTxt(l.txt,n,3); l.w=l.lines.length*fs*1.12+0.5; }); return labs.reduce((s,l)=>s+l.w,0); };
   while(fit(lfs)>availW && lfs>1.4) lfs=+(lfs-0.1).toFixed(2);
   if(labs.reduce((s,l)=>s+l.w,0)>availW){ labs.forEach(l=>{ l.lines=wrapTxt(l.txt,Math.max(12,Math.floor(LABLEN/(lfs*0.5))),1); l.w=lfs*1.12+0.5; }); }
   const xs=labs.map(l=>X(l.c)-l.w/2);
   for(let it=0;it<400;it++){ let mv=false; for(let i=1;i<xs.length;i++){ const need=labs[i-1].w; if(xs[i]-xs[i-1]<need-1e-6){ const d=(need-(xs[i]-xs[i-1]))/2; xs[i-1]-=d; xs[i]+=d; mv=true; } } if(!mv) break; }
-  const shift=Math.max(0,x0+2-xs[0]||0); for(let i=0;i<xs.length;i++) xs[i]+=shift; const over=xs.length? xs[xs.length-1]+labs[labs.length-1].w-(x1-1):0; if(over>0) for(let i=0;i<xs.length;i++) xs[i]-=over;
+  const shift=Math.max(0,x0+2-xs[0]||0); for(let i=0;i<xs.length;i++) xs[i]+=shift; const over=xs.length? xs[xs.length-1]+labs[labs.length-1].w-(xP-1):0; if(over>0) for(let i=0;i<xs.length;i++) xs[i]-=over;
   const yL=yPlotTop+LAB, topSurf=c=>{ let z=-1e9; Pr.surf.te.forEach(p=>{ if(Math.abs(p[0]-c)<Pr.L/60+0.5) z=Math.max(z,p[1]); }); return z; };
   labs.forEach((l,i)=>{ const xa=X(l.c), ya=Y(l.z), yk=Math.min(Y(Math.max(topSurf(l.c),l.z))-2, yL+2);
     const xm=xs[i]+l.w/2; Ln(xa,ya,xa,yk,l.col,0.12,'0.6 0.4'); Ln(xa,yk,xm,yL,l.col,0.12);
     l.lines.forEach((s,k)=>T(xs[i]+0.25+lfs*0.82+k*lfs*1.12,yL-1,s,{fs:lfs,rot:-90,col:l.col})); });
+  // nazwy studni i komór w elipsach nad obiektem (zakrywają linie pomocnicze)
+  { const teN=c=>{ let b=null; Pr.surf.te.forEach(q=>{ if(!b||Math.abs(q[0]-c)<Math.abs(b[0]-c)) b=q; }); return b&&Math.abs(b[0]-c)<1.5?b[1]:null; };
+    const el=[]; Pr.wl.forEach(w=>{ if(w.kind!=='proj') return; el.push({c:w.c, z:Math.max(w.zt, teN(w.c)||w.zt), t:SHORT(w.lab||w.desc), col:'#2b5aa0'}); });
+    Pr.kn.forEach(k=>el.push({c:(k.c0+k.c1)/2, z:Math.max(k.zt, teN((k.c0+k.c1)/2)||k.zt), t:k.lab, col:'#5d3a17'}));
+    el.sort((a,b)=>a.c-b.c); const fsE=2.4, placed=[];
+    el.forEach(e=>{ e.rx=e.t.length*fsE*0.31+1.6; e.ry=2.1; e.x=Math.min(Math.max(X(e.c),x0+e.rx+0.5),xP-e.rx); e.y=Y(e.z)-e.ry-1.2;
+      for(let it=0;it<6;it++){ const hit=placed.find(q=>Math.abs(q.x-e.x)<q.rx+e.rx+0.4&&Math.abs(q.y-e.y)<q.ry+e.ry+0.3); if(!hit) break; e.y=hit.y-hit.ry-e.ry-0.6; }
+      placed.push(e);
+      if(Math.abs(e.y-(Y(e.z)-e.ry-1.2))>0.1) Ln(X(e.c),Y(e.z),e.x,e.y+e.ry,e.col,0.15);
+      o.push(`<ellipse cx="${e.x.toFixed(2)}" cy="${e.y.toFixed(2)}" rx="${e.rx.toFixed(2)}" ry="${e.ry}" fill="#fff" stroke="${e.col}" stroke-width="0.3"/>`);
+      T(e.x,e.y+fsE*0.34,e.t,{fs:fsE,w:700,anc:'middle',col:e.col}); }); }
   // pasy opisowe
   const by=r=>yBandTop+r*RH;
   o.push(`<rect x="${M}" y="${yBandTop}" width="${x1-M}" height="${bandH}" fill="none" stroke="#111" stroke-width="0.3"/>`);
@@ -3486,8 +3510,8 @@ function drawProfile(Pr,paper,exSel){
   T(tx+2,ty+16.4,`Opracował: mgr inż. Aleksander Bury · ${new Date().toLocaleDateString('pl-PL')}`,{fs:2.2});
   T(tx+2,ty+20.4,'Rzędne wg modelu 3D: sieci proj. – PW i karty KNA, istn. – mapa do c.p. (orientacyjne);',{fs:1.85,col:'#444'});
   T(tx+2,ty+23.6,'przed robotami potwierdzić odkrywkami. Opracowanie pomocnicze – nie zastępuje projektu.',{fs:1.85,col:'#444'});
-  // mapka lokalizacji (lewy dół): podkład drogowy, mapa, sieci, trasa profilu
-  const ty0=PH-M-TB, mpw=Math.min(paper==='A3'?200:110, tx-M-(paper==='A3'?80:60)), mp={x:M, y:ty0, w:mpw, h:TB};
+  // mapka lokalizacji (z boku, nad tabelką): podkład drogowy, mapa, sieci, trasa profilu
+  const ty0=PH-M-TB, mp={x:x1-MAPW, y:yBandTop-MAPH-3, w:MAPW, h:MAPH};
   o.push(`<rect x="${mp.x}" y="${mp.y}" width="${mp.w}" height="${mp.h}" fill="#fff" stroke="#111" stroke-width="0.35"/>`);
   { const xs_=Pr.pts.map(p=>p[0]), ys_=Pr.pts.map(p=>p[1]); const bx0=Math.min(...xs_), bx1=Math.max(...xs_), by0=Math.min(...ys_), by1=Math.max(...ys_);
     const cx=(bx0+bx1)/2, cy=(by0+by1)/2, ih=mp.h-6, iw=mp.w-2;
@@ -3502,9 +3526,12 @@ function drawProfile(Pr,paper,exSel){
     (D.wells||[]).forEach(w=>{ if(!inb(w[0],w[1])||(Pr.g&&w[6]&&!String(Pr.g.id).startsWith(w[6]))) return; o.push(`<circle cx="${MX(w[0]).toFixed(2)}" cy="${MY(w[1]).toFixed(2)}" r="0.55" fill="#fff" stroke="#2b5aa0" stroke-width="0.15"/>`); });
     Pl(Pr.pts.map(p=>[MX(p[0]),MY(p[1])]),'#fff',1.6); Pl(Pr.pts.map(p=>[MX(p[0]),MY(p[1])]),'#e00',0.8);
     const lbl=(p,t,dy)=>{ if(!t) return; const x=MX(p[0]), y=MY(p[1]); o.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="0.9" fill="#e00"/>`);
-      o.push(`<text x="${(x+1.4).toFixed(2)}" y="${(y+dy).toFixed(2)}" font-size="2.6" font-weight="700" fill="#c00" stroke="#fff" stroke-width="0.6" paint-order="stroke" font-family="Arial,Helvetica,sans-serif">${esc(t)}</text>`); };
+      const right=x>mp.x+mp.w-t.length*1.6-3; o.push(`<text x="${(right?x-1.4:x+1.4).toFixed(2)}" y="${(y+dy).toFixed(2)}" text-anchor="${right?'end':'start'}" font-size="2.6" font-weight="700" fill="#c00" stroke="#fff" stroke-width="0.6" paint-order="stroke" font-family="Arial,Helvetica,sans-serif">${esc(t)}</text>`); };
     const nm=w=>w?SHORT(w.lab||w.desc):'';
     const wFirst=Pr.wl.filter(w=>w.kind==='proj').sort((a,b)=>a.c-b.c), sName=Pr.from||(wFirst.length&&wFirst[0].c<1.5?nm(wFirst[0]):'pocz.'), eName=Pr.to||(wFirst.length&&wFirst[wFirst.length-1].c>Pr.L-1.5?nm(wFirst[wFirst.length-1]):'koniec');
+    { const lab2=[]; Pr.wl.filter(w=>w.kind==='proj').forEach(w=>lab2.push({x:w.x,y:w.y,t:nm(w)})); (Pr.kn||[]).forEach(q=>{ const so=(D.knas||[]).find(z=>z.name.startsWith(q.lab)); if(so){ const cx_=so.poly.reduce((a,b)=>a+b[0],0)/so.poly.length, cy_=so.poly.reduce((a,b)=>a+b[1],0)/so.poly.length; lab2.push({x:cx_,y:cy_,t:q.lab}); } });
+      lab2.forEach(q=>{ const x=MX(q.x), y=MY(q.y); o.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="0.75" fill="#fff" stroke="#c00" stroke-width="0.3"/>`);
+        o.push(`<text x="${(x+1.1).toFixed(2)}" y="${(y-0.9).toFixed(2)}" font-size="2.1" font-weight="700" fill="#c00" stroke="#fff" stroke-width="0.55" paint-order="stroke" font-family="Arial,Helvetica,sans-serif">${esc(q.t)}</text>`); }); }
     lbl(Pr.pts[0],sName+' (0,00)',-1.2); lbl(Pr.pts[Pr.pts.length-1],eName+' ('+f2(Pr.L)+')',3);
     o.push('</g>');
     T(mp.x+1.5,mp.y+3.6,'Lokalizacja profilu – plan',{fs:2.5,w:700});
@@ -3514,8 +3541,8 @@ function drawProfile(Pr,paper,exSel){
     o.push(`<rect x="${sx0.toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#111"/><rect x="${(sx0+sl*k/2).toFixed(2)}" y="${(sy0-0.9).toFixed(2)}" width="${(sl*k/2).toFixed(2)}" height="0.9" fill="#fff" stroke="#111" stroke-width="0.15"/>`);
     T(sx0,sy0-1.6,'0',{fs:1.9,anc:'middle'}); T(sx0+sl*k,sy0-1.6,sl+' m',{fs:1.9,anc:'middle'}); }
   // legenda (między mapką a tabliczką)
-  const lx=mp.x+mp.w+4, lw=tx-lx-4, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
-  wrapTxt('Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy). Na mapce: podkład – nawierzchnie i krawężniki drogi proj., mapa do c.p., sieci; czerwona linia – trasa profilu.',Math.max(30,Math.floor(lw/1.0)),8).forEach((s,i)=>T(lx,ly+10+i*3.1,s,{fs:2.0}));
+  const lx=M, lw=tx-lx-6, ly=ty0+4; [['#8b5a2b','teren istniejący'],['#2e9e44','teren projektowany (nawierzchnia)']].forEach((q,i)=>{ Ln(lx,ly+i*4.2,lx+8,ly+i*4.2,q[0],0.5); T(lx+10,ly+i*4.2+0.8,q[1],{fs:2.1}); });
+  wrapTxt('Elipsy – przewody przecinające (kolor wg warstwy, przerywane – do likwidacji); prostokąty – studnie/komory (przerywane – istn. z mapy). Mapka lokalizacji: podkład – nawierzchnie i krawężniki drogi proj., mapa do c.p., sieci; czerwona linia – trasa profilu.',Math.max(30,Math.floor(lw/1.0)),4).forEach((s,i)=>T(lx,ly+10+i*3.1,s,{fs:2.0}));
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PW} ${PH}" width="${PW}mm" height="${PH}mm">${o.join('')}</svg>`;
 }
 
